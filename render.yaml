@@ -3,7 +3,6 @@ services:
     name: ielts-ustoz-ai
     runtime: node
     plan: free
-
     buildCommand: npm install
     startCommand: npm start
 
@@ -11,23 +10,8 @@ services:
       - key: GEMINI_API_KEY
         sync: false
 
-      - key: LIVE_MODEL
+      - key: GEMINI_LIVE_MODEL
         value: gemini-3.8-live
 
-      - key: LIVE_VOICE
-        value: Kore
-
-      - key: OPENAI_API_KEY
-        sync: false
-
-      - key: AI_MODEL
-        value: gpt-5.6-luna
-
-      - key: TRANSCRIBE_MODEL
-        value: gpt-4o-transcribe
-
-      - key: TTS_MODEL
-        value: gpt-4o-mini-tts
-
-      - key: PORT
-        value: 10000
+      - key: GEMINI_TEXT_MODEL
+        value: gemini-3.8-flash
