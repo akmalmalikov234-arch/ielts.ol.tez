@@ -1,432 +1,636 @@
 (() => {
   "use strict";
 
-  const INPUT_SAMPLE_RATE = 16000;
-  const OUTPUT_SAMPLE_RATE = 24000;
+  const INPUT_RATE = 16000;
+  const OUTPUT_RATE = 24000;
 
-  let socket = null;
-  let audioContext = null;
-  let microphoneStream = null;
-  let microphoneSource = null;
+  let ws = null;
+  let ctx = null;
+  let stream = null;
+  let source = null;
   let processor = null;
-  let silentGain = null;
+  let mute = null;
 
   let running = false;
-  let connected = false;
+  let ready = false;
 
-  let playbackTime = 0;
+  let outputTime = 0;
+  let startedAt = 0;
+  let timer = null;
 
-  const state = {
-    userText: "",
-    aiText: ""
-  };
+  let userLine = null;
+  let aiLine = null;
 
-  function $(selector) {
-    return document.querySelector(selector);
+  const ui = {};
+
+
+  // ===================================================
+  // HELPERS
+  // ===================================================
+
+  const $ = (
+    selector,
+    root = document
+  ) =>
+    root.querySelector(
+      selector
+    );
+
+
+  function el(
+    tag,
+    className,
+    text
+  ) {
+    const node =
+      document.createElement(
+        tag
+      );
+
+    if (className) {
+      node.className =
+        className;
+    }
+
+    if (
+      text !== undefined
+    ) {
+      node.textContent =
+        text;
+    }
+
+    return node;
   }
 
-  function createStyles() {
-    if ($("#ieltsLiveStyles")) {
+
+  // ===================================================
+  // DESIGN
+  // ===================================================
+
+  function addStyles() {
+    if (
+      $("#liveSpeakingStyles")
+    ) {
       return;
     }
 
     const style =
-      document.createElement("style");
+      document.createElement(
+        "style"
+      );
 
-    style.id = "ieltsLiveStyles";
+    style.id =
+      "liveSpeakingStyles";
 
     style.textContent = `
-      .ielts-live-card {
-        margin-top: 24px;
-        padding: 24px;
-        border: 1px solid var(--border, #252d42);
-        border-radius: 24px;
+      .live-speaking-card {
+        margin-top: 18px;
+        padding: 22px;
+        border: 1px solid rgba(200,255,66,.22);
+        border-radius: 22px;
         background:
           radial-gradient(
-            circle at 85% 10%,
+            circle at 85% 15%,
             rgba(101,231,255,.08),
             transparent 35%
           ),
           linear-gradient(
             145deg,
             #11182a,
-            #090d18
+            #0a0f1c
           );
         box-shadow:
-          0 20px 60px rgba(0,0,0,.35);
+          0 18px 50px rgba(0,0,0,.28);
       }
 
-      .ielts-live-top {
-        display:flex;
-        justify-content:space-between;
-        align-items:flex-start;
-        gap:18px;
+      .live-speaking-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 18px;
+        margin-bottom: 18px;
       }
 
-      .ielts-live-label {
-        color:var(--lime, #c8ff42);
-        font-size:11px;
-        font-weight:800;
-        letter-spacing:.16em;
-        margin-bottom:8px;
+      .live-speaking-kicker {
+        color: #c8ff42;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .15em;
+        margin-bottom: 7px;
       }
 
-      .ielts-live-title {
-        margin:0;
-        color:var(--text, #f6f8ff);
-        font-size:25px;
-        line-height:1.15;
+      .live-speaking-title {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.15;
       }
 
-      .ielts-live-description {
-        margin:9px 0 0;
-        color:var(--muted, #8d98b4);
-        font-size:14px;
-        line-height:1.55;
+      .live-speaking-subtitle {
+        margin: 8px 0 0;
+        color: #8d98b4;
+        line-height: 1.55;
+        font-size: 14px;
       }
 
-      .ielts-live-status {
-        display:flex;
-        align-items:center;
-        gap:8px;
-        padding:8px 12px;
-        border:1px solid var(--border, #252d42);
-        border-radius:999px;
-        color:var(--muted, #8d98b4);
-        font-size:12px;
-        white-space:nowrap;
+      .live-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid #252d42;
+        border-radius: 999px;
+        padding: 8px 11px;
+        color: #8d98b4;
+        font-size: 12px;
+        white-space: nowrap;
       }
 
-      .ielts-live-dot {
-        width:8px;
-        height:8px;
-        border-radius:50%;
-        background:#68738f;
+      .live-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #69738d;
       }
 
-      .ielts-live-status.live
-      .ielts-live-dot {
-        background:var(--lime, #c8ff42);
+      .live-status.is-live
+      .live-status-dot {
+        background: #c8ff42;
         box-shadow:
           0 0 14px
           rgba(200,255,66,.7);
       }
 
-      .ielts-live-window {
-        margin-top:20px;
-        min-height:220px;
-        padding:16px;
-        border:1px solid var(--border, #252d42);
-        border-radius:18px;
-        background:rgba(0,0,0,.18);
-      }
-
-      .ielts-live-messages {
-        max-height:260px;
-        overflow:auto;
-      }
-
-      .ielts-live-empty {
-        color:var(--muted, #8d98b4);
-        font-size:14px;
-        line-height:1.55;
-        padding:10px 4px;
-      }
-
-      .ielts-live-message {
-        margin-bottom:10px;
-        padding:11px 13px;
-        border-radius:14px;
-        line-height:1.55;
-        font-size:14px;
-      }
-
-      .ielts-live-user {
+      .live-phone {
+        min-height: 210px;
+        border: 1px solid #252d42;
+        border-radius: 18px;
+        padding: 18px;
         background:
-          rgba(101,231,255,.07);
+          rgba(6,8,17,.52);
+      }
+
+      .live-conversation {
+        max-height: 260px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .live-empty {
+        color: #68738f;
+        font-size: 14px;
+        line-height: 1.55;
+        padding: 8px 2px;
+      }
+
+      .live-line {
+        margin-bottom: 10px;
+        padding: 10px 12px;
+        border-radius: 13px;
+        line-height: 1.5;
+        font-size: 14px;
+      }
+
+      .live-line-user {
+        background:
+          rgba(101,231,255,.08);
         border:
           1px solid
-          rgba(101,231,255,.13);
+          rgba(101,231,255,.12);
       }
 
-      .ielts-live-ai {
+      .live-line-ai {
         background:
           rgba(200,255,66,.07);
         border:
           1px solid
-          rgba(200,255,66,.13);
+          rgba(200,255,66,.12);
       }
 
-      .ielts-live-message-name {
-        display:block;
-        margin-bottom:4px;
-        font-size:10px;
-        font-weight:800;
-        letter-spacing:.08em;
-        opacity:.55;
+      .live-line-label {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: .08em;
+        opacity: .55;
       }
 
-      .ielts-live-controls {
-        display:flex;
-        justify-content:center;
-        margin-top:18px;
+      .live-speaking-controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 16px;
       }
 
-      .ielts-live-button {
-        width:78px;
-        height:78px;
-        border:0;
-        border-radius:50%;
-        cursor:pointer;
-        background:var(--lime, #c8ff42);
-        color:#07100a;
-        font-size:28px;
+      .live-call-button {
+        width: 76px;
+        height: 76px;
+        border: 0;
+        border-radius: 50%;
+        cursor: pointer;
+        background: #c8ff42;
+        color: #07100a;
+        font-size: 27px;
         box-shadow:
-          0 14px 40px
-          rgba(200,255,66,.18);
+          0 12px 35px
+          rgba(200,255,66,.16);
+        transition:
+          transform .15s ease,
+          box-shadow .15s ease;
       }
 
-      .ielts-live-button.active {
-        background:var(--red, #ff4e69);
-        color:#fff;
+      .live-call-button:hover {
+        transform:
+          translateY(-2px);
       }
 
-      .ielts-live-note {
-        margin-top:12px;
-        text-align:center;
-        color:var(--muted, #8d98b4);
-        font-size:12px;
+      .live-call-button.is-active {
+        background: #ff4e69;
+        color: white;
       }
 
-      @media(max-width:700px) {
-        .ielts-live-top {
-          flex-direction:column;
+      .live-speaking-note {
+        margin-top: 13px;
+        text-align: center;
+        color: #68738f;
+        font-size: 12px;
+      }
+
+      .live-timer {
+        margin-left: 10px;
+      }
+
+      @media (max-width: 700px) {
+        .live-speaking-head {
+          flex-direction: column;
         }
 
-        .ielts-live-title {
-          font-size:21px;
+        .live-speaking-title {
+          font-size: 21px;
         }
       }
     `;
 
-    document.head.appendChild(style);
+    document.head.appendChild(
+      style
+    );
   }
 
-  function createCard() {
+
+  // ===================================================
+  // BUILD INSIDE EXISTING SPEAKING SECTION
+  // ===================================================
+
+  function buildUI() {
     const speaking =
       $("#speaking");
 
     if (!speaking) {
-      return;
+      return false;
     }
 
-    if ($("#ieltsLiveCard")) {
-      return;
+    if (
+      $("#liveSpeakingCard")
+    ) {
+      return true;
     }
 
-    createStyles();
+    addStyles();
 
     const card =
-      document.createElement("div");
-
-    card.id = "ieltsLiveCard";
-    card.className =
-      "ielts-live-card";
-
-    card.innerHTML = `
-      <div class="ielts-live-top">
-
-        <div>
-          <div class="ielts-live-label">
-            LIVE SPEAKING
-          </div>
-
-          <h3 class="ielts-live-title">
-            📞 Telefon kabi Ustoz bilan gaplash
-          </h3>
-
-          <p class="ielts-live-description">
-            Mikrofonni yoqing va IELTS Ustoz
-            bilan real-time tabiiy suhbat qiling.
-          </p>
-        </div>
-
-        <div
-          id="ieltsLiveStatus"
-          class="ielts-live-status"
-        >
-          <span
-            class="ielts-live-dot"
-          ></span>
-
-          <span>
-            Tayyor
-          </span>
-        </div>
-
-      </div>
-
-      <div class="ielts-live-window">
-
-        <div
-          id="ieltsLiveMessages"
-          class="ielts-live-messages"
-        >
-          <div class="ielts-live-empty">
-            📞 Qo‘ng‘iroq tugmasini bosing.
-            Ustoz IELTS Speaking savolini beradi.
-          </div>
-        </div>
-
-      </div>
-
-      <div class="ielts-live-controls">
-
-        <button
-          id="ieltsLiveButton"
-          class="ielts-live-button"
-          type="button"
-          aria-label="Live Speaking"
-        >
-          📞
-        </button>
-
-      </div>
-
-      <div class="ielts-live-note">
-        Mikrofon ruxsati kerak.
-      </div>
-    `;
-
-    speaking.appendChild(card);
-
-    $("#ieltsLiveButton")
-      .addEventListener(
-        "click",
-        () => {
-          if (running) {
-            stopCall();
-          } else {
-            startCall();
-          }
-        }
+      el(
+        "article",
+        "card live-speaking-card"
       );
+
+    card.id =
+      "liveSpeakingCard";
+
+
+    const head =
+      el(
+        "div",
+        "live-speaking-head"
+      );
+
+    const left =
+      document.createElement(
+        "div"
+      );
+
+
+    left.append(
+      el(
+        "div",
+        "live-speaking-kicker",
+        "LIVE SPEAKING"
+      ),
+
+      el(
+        "h3",
+        "live-speaking-title",
+        "Telefon kabi Ustoz bilan gaplash"
+      ),
+
+      el(
+        "p",
+        "live-speaking-subtitle",
+        "Mikrofonni yoqing va IELTS ustoz bilan real-time ingliz tilida tabiiy suhbat qiling."
+      )
+    );
+
+
+    const status =
+      el(
+        "div",
+        "live-status"
+      );
+
+    const dot =
+      el(
+        "span",
+        "live-status-dot"
+      );
+
+    const statusText =
+      el(
+        "span",
+        "",
+        "Tayyor"
+      );
+
+    status.append(
+      dot,
+      statusText
+    );
+
+    head.append(
+      left,
+      status
+    );
+
+
+    const phone =
+      el(
+        "div",
+        "live-phone"
+      );
+
+    const conversation =
+      el(
+        "div",
+        "live-conversation"
+      );
+
+    conversation.append(
+      el(
+        "div",
+        "live-empty",
+        "📞 Qo‘ng‘iroq tugmasini bosing. Ustoz avval IELTS Speaking savolini beradi."
+      )
+    );
+
+    phone.append(
+      conversation
+    );
+
+
+    const controls =
+      el(
+        "div",
+        "live-speaking-controls"
+      );
+
+    const button =
+      el(
+        "button",
+        "live-call-button",
+        "📞"
+      );
+
+    button.type =
+      "button";
+
+    button.title =
+      "Live Speaking boshlash";
+
+    controls.append(
+      button
+    );
+
+
+    const note =
+      el(
+        "div",
+        "live-speaking-note",
+        "Mikrofon ruxsati kerak"
+      );
+
+    const timerEl =
+      el(
+        "span",
+        "live-timer",
+        "00:00"
+      );
+
+    note.append(
+      timerEl
+    );
+
+
+    card.append(
+      head,
+      phone,
+      controls,
+      note
+    );
+
+
+    const result =
+      $(
+        "#speakingResult",
+        speaking
+      );
+
+    if (result) {
+      speaking.insertBefore(
+        card,
+        result
+      );
+    } else {
+      speaking.append(
+        card
+      );
+    }
+
+
+    ui.card =
+      card;
+
+    ui.status =
+      statusText;
+
+    ui.statusWrap =
+      status;
+
+    ui.button =
+      button;
+
+    ui.conversation =
+      conversation;
+
+    ui.timer =
+      timerEl;
+
+
+    button.addEventListener(
+      "click",
+      () => {
+        if (running) {
+          stop();
+        } else {
+          start();
+        }
+      }
+    );
+
+    return true;
   }
 
-  function status(
+
+  // ===================================================
+  // UI STATUS
+  // ===================================================
+
+  function setStatus(
     text,
     live = false
   ) {
-    const element =
-      $("#ieltsLiveStatus");
-
-    if (!element) {
-      return;
+    if (ui.status) {
+      ui.status.textContent =
+        text;
     }
 
-    element.classList.toggle(
-      "live",
-      live
-    );
-
-    const textElement =
-      element.querySelector(
-        "span:last-child"
+    if (ui.statusWrap) {
+      ui.statusWrap.classList.toggle(
+        "is-live",
+        live
       );
-
-    if (textElement) {
-      textElement.textContent =
-        text;
     }
   }
 
-  function button(
+
+  function setButton(
     active
   ) {
-    const element =
-      $("#ieltsLiveButton");
-
-    if (!element) {
+    if (!ui.button) {
       return;
     }
 
-    element.classList.toggle(
-      "active",
+    ui.button.classList.toggle(
+      "is-active",
       active
     );
 
-    element.textContent =
+    ui.button.textContent =
       active
-        ? "⏹️"
+        ? "⏹"
         : "📞";
   }
 
-  function addMessage(
-    name,
-    text,
-    type
-  ) {
-    if (!text?.trim()) {
-      return;
-    }
 
-    const box =
-      $("#ieltsLiveMessages");
-
-    if (!box) {
-      return;
-    }
-
+  function clearEmpty() {
     const empty =
-      box.querySelector(
-        ".ielts-live-empty"
+      $(
+        ".live-empty",
+        ui.conversation
       );
 
     if (empty) {
       empty.remove();
     }
-
-    const item =
-      document.createElement("div");
-
-    item.className =
-      `ielts-live-message ${
-        type === "ai"
-          ? "ielts-live-ai"
-          : "ielts-live-user"
-      }`;
-
-    const nameElement =
-      document.createElement("span");
-
-    nameElement.className =
-      "ielts-live-message-name";
-
-    nameElement.textContent =
-      name;
-
-    const textElement =
-      document.createElement("div");
-
-    textElement.textContent =
-      text;
-
-    item.append(
-      nameElement,
-      textElement
-    );
-
-    box.appendChild(item);
-
-    box.scrollTop =
-      box.scrollHeight;
   }
 
-  function base64ToBytes(
-    value
+
+  // ===================================================
+  // TRANSCRIPT UI
+  // ===================================================
+
+  function addLine(
+    who,
+    text
+  ) {
+    if (!text?.trim()) {
+      return null;
+    }
+
+    clearEmpty();
+
+    const isUser =
+      who === "Siz";
+
+    const line =
+      el(
+        "div",
+        `live-line ${
+          isUser
+            ? "live-line-user"
+            : "live-line-ai"
+        }`
+      );
+
+    line.append(
+      el(
+        "span",
+        "live-line-label",
+        who
+      ),
+
+      el(
+        "span",
+        "",
+        text.trim()
+      )
+    );
+
+    ui.conversation.append(
+      line
+    );
+
+    ui.conversation.scrollTop =
+      ui.conversation.scrollHeight;
+
+    return line.lastElementChild;
+  }
+
+
+  function updateLine(
+    node,
+    text
+  ) {
+    if (
+      !node ||
+      !text?.trim()
+    ) {
+      return;
+    }
+
+    node.textContent =
+      text.trim();
+
+    ui.conversation.scrollTop =
+      ui.conversation.scrollHeight;
+  }
+
+
+  // ===================================================
+  // BASE64 / PCM
+  // ===================================================
+
+  function bytesFromBase64(
+    base64
   ) {
     const binary =
-      atob(value);
+      atob(base64);
 
     const bytes =
       new Uint8Array(
@@ -445,24 +649,22 @@
     return bytes;
   }
 
-  function bytesToBase64(
+
+  function base64FromBytes(
     bytes
   ) {
     let binary = "";
 
-    const chunk =
-      0x8000;
-
     for (
       let i = 0;
       i < bytes.length;
-      i += chunk
+      i += 0x8000
     ) {
       binary +=
         String.fromCharCode(
           ...bytes.subarray(
             i,
-            i + chunk
+            i + 0x8000
           )
         );
     }
@@ -470,87 +672,23 @@
     return btoa(binary);
   }
 
-  function downsample(
-    input,
-    fromRate
-  ) {
-    if (
-      fromRate ===
-      INPUT_SAMPLE_RATE
-    ) {
-      return input;
-    }
 
-    const ratio =
-      fromRate /
-      INPUT_SAMPLE_RATE;
-
-    const length =
-      Math.round(
-        input.length /
-        ratio
-      );
-
-    const result =
-      new Float32Array(
-        length
-      );
-
-    for (
-      let i = 0;
-      i < length;
-      i++
-    ) {
-      const start =
-        Math.floor(
-          i * ratio
-        );
-
-      const end =
-        Math.min(
-          Math.floor(
-            (i + 1) * ratio
-          ),
-          input.length
-        );
-
-      let total = 0;
-      let count = 0;
-
-      for (
-        let j = start;
-        j < end;
-        j++
-      ) {
-        total +=
-          input[j];
-
-        count++;
-      }
-
-      result[i] =
-        count
-          ? total / count
-          : 0;
-    }
-
-    return result;
-  }
-
-  function floatToPCM(
-    data
+  function pcm16(
+    input
   ) {
     const buffer =
       new ArrayBuffer(
-        data.length * 2
+        input.length * 2
       );
 
     const view =
-      new DataView(buffer);
+      new DataView(
+        buffer
+      );
 
     for (
       let i = 0;
-      i < data.length;
+      i < input.length;
       i++
     ) {
       const sample =
@@ -558,18 +696,17 @@
           -1,
           Math.min(
             1,
-            data[i]
+            input[i]
           )
         );
 
-      const value =
-        sample < 0
-          ? sample * 0x8000
-          : sample * 0x7fff;
-
       view.setInt16(
         i * 2,
-        value,
+
+        sample < 0
+          ? sample * 32768
+          : sample * 32767,
+
         true
       );
     }
@@ -579,30 +716,102 @@
     );
   }
 
-  function playAudio(
+
+  function downsample(
+    input,
+    inputRate
+  ) {
+    if (
+      inputRate ===
+      INPUT_RATE
+    ) {
+      return input;
+    }
+
+    const length =
+      Math.max(
+        1,
+        Math.round(
+          input.length *
+          INPUT_RATE /
+          inputRate
+        )
+      );
+
+    const output =
+      new Float32Array(
+        length
+      );
+
+    const ratio =
+      inputRate /
+      INPUT_RATE;
+
+    for (
+      let i = 0;
+      i < length;
+      i++
+    ) {
+      const position =
+        i * ratio;
+
+      const left =
+        Math.floor(
+          position
+        );
+
+      const right =
+        Math.min(
+          left + 1,
+          input.length - 1
+        );
+
+      const amount =
+        position - left;
+
+      output[i] =
+        input[left] *
+          (1 - amount) +
+        input[right] *
+          amount;
+    }
+
+    return output;
+  }
+
+
+  // ===================================================
+  // PLAY GEMINI PCM
+  // ===================================================
+
+  function playPCM(
     base64
   ) {
-    if (!audioContext) {
+    if (!ctx) {
       return;
     }
 
     const bytes =
-      base64ToBytes(base64);
+      bytesFromBase64(
+        base64
+      );
 
-    const samples =
+    const count =
       Math.floor(
         bytes.length / 2
       );
 
     const buffer =
-      audioContext.createBuffer(
+      ctx.createBuffer(
         1,
-        samples,
-        OUTPUT_SAMPLE_RATE
+        count,
+        OUTPUT_RATE
       );
 
     const channel =
-      buffer.getChannelData(0);
+      buffer.getChannelData(
+        0
+      );
 
     const view =
       new DataView(
@@ -613,7 +822,7 @@
 
     for (
       let i = 0;
-      i < samples;
+      i < count;
       i++
     ) {
       channel[i] =
@@ -623,34 +832,184 @@
         ) / 32768;
     }
 
-    const source =
-      audioContext.createBufferSource();
+    const node =
+      ctx.createBufferSource();
 
-    source.buffer =
+    node.buffer =
       buffer;
 
-    source.connect(
-      audioContext.destination
+    node.connect(
+      ctx.destination
     );
 
     const now =
-      audioContext.currentTime;
+      ctx.currentTime;
 
     if (
-      playbackTime <
+      outputTime <
       now
     ) {
-      playbackTime =
+      outputTime =
         now + 0.03;
     }
 
-    source.start(
-      playbackTime
+    node.start(
+      outputTime
     );
 
-    playbackTime +=
+    outputTime +=
       buffer.duration;
   }
+
+
+  // ===================================================
+  // GET GEMINI EPHEMERAL TOKEN
+  // ===================================================
+
+  async function getToken() {
+    const response =
+      await fetch(
+        "/api/live-token",
+        {
+          method:
+            "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+
+          body:
+            "{}"
+        }
+      );
+
+    const data =
+      await response
+        .json()
+        .catch(
+          () => ({})
+        );
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        `Live token error ${response.status}`
+      );
+    }
+
+    if (!data.token) {
+      throw new Error(
+        "Gemini Live token olinmadi."
+      );
+    }
+
+    return data;
+  }
+
+
+  // ===================================================
+  // GEMINI SETUP
+  // ===================================================
+
+  function sendSetup(
+    model,
+    voice
+  ) {
+    ws.send(
+      JSON.stringify({
+        setup: {
+          model:
+            `models/${model}`,
+
+          generationConfig: {
+            responseModalities: [
+              "AUDIO"
+            ],
+
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName:
+                    voice ||
+                    "Kore"
+                }
+              }
+            }
+          },
+
+          inputAudioTranscription:
+            {},
+
+          outputAudioTranscription:
+            {},
+
+          systemInstruction: {
+            parts: [
+              {
+                text:
+                  `
+Sen IELTS USTOZ AI'san.
+
+O'quvchi bilan huddi
+telefonda gaplashayotgandek
+real-time IELTS Speaking
+mashqi qil.
+
+Ovozing:
+
+- sokin
+- tabiiy
+- samimiy
+- ustozona
+
+Gaplarni qisqa
+va tabiiy qil.
+
+O'quvchi gapirayotgan
+paytda uni bo'lma.
+
+O'quvchi javobini
+tugatgach javob ber.
+
+Suhbat asosan
+ingliz tilida bo'lsin.
+
+O'quvchi o'zbekcha
+tushuntirish so'rasa
+o'zbekcha tushuntir.
+
+IELTS Speaking:
+
+Part 1
+Part 2
+Part 3
+
+savollaridan foydalan.
+
+Kerak bo'lsa grammar
+va vocabulary xatolarini
+muloyim tuzat.
+
+Birinchi bo'lib
+salomlash.
+
+Keyin IELTS Speaking
+Part 1 uchun bitta
+savol ber.
+`
+              }
+            ]
+          }
+        }
+      })
+    );
+  }
+
+
+  // ===================================================
+  // GEMINI MESSAGE HANDLER
+  // ===================================================
 
   function handleMessage(
     raw
@@ -664,39 +1023,55 @@
       return;
     }
 
+
     if (
-      message.type ===
-      "error"
+      message.error
     ) {
-      console.error(
-        "Gemini Live:",
-        message.error
+      setStatus(
+        message.error.message ||
+        "Gemini Live xatosi."
       );
-
-      status(
-        message.error ||
-        "Live xatolik",
-        false
-      );
-
-      stopCall();
 
       return;
     }
 
-    if (
-      message.type ===
-      "connected"
-    ) {
-      connected = true;
 
-      status(
-        "Ustoz tayyor",
+    if (
+      message.setupComplete
+    ) {
+      ready = true;
+
+      setStatus(
+        "Ustoz tayyor — gaplashing...",
         true
       );
 
+      ws.send(
+        JSON.stringify({
+          clientContent: {
+            turns: [
+              {
+                role:
+                  "user",
+
+                parts: [
+                  {
+                    text:
+                      "Suhbatni hozir boshlang. Salomlashing va IELTS Speaking Part 1 uchun bitta savol bering."
+                  }
+                ]
+              }
+            ],
+
+            turnComplete:
+              true
+          }
+        })
+      );
+
       return;
     }
+
 
     const content =
       message.serverContent;
@@ -705,24 +1080,102 @@
       return;
     }
 
+
+    // Model javobi o'quvchi
+    // gapirganda to'xtatilsa
     if (
-      content.inputTranscription?.text
+      content.interrupted
     ) {
-      state.userText +=
-        content
-          .inputTranscription
-          .text;
+      outputTime =
+        ctx?.currentTime ||
+        0;
+
+      setStatus(
+        "Siz gapiryapsiz...",
+        true
+      );
     }
 
+
+    // O'quvchi ovozi
     if (
-      content.outputTranscription?.text
+      content
+        .interimInputTranscription
+        ?.text
     ) {
-      state.aiText +=
-        content
-          .outputTranscription
-          .text;
+      if (!userLine) {
+        userLine =
+          addLine(
+            "Siz",
+            content
+              .interimInputTranscription
+              .text
+          );
+      } else {
+        updateLine(
+          userLine,
+
+          content
+            .interimInputTranscription
+            .text
+        );
+      }
     }
 
+
+    // O'quvchi yakuniy transcript
+    if (
+      content
+        .inputTranscription
+        ?.text
+    ) {
+      if (!userLine) {
+        userLine =
+          addLine(
+            "Siz",
+            content
+              .inputTranscription
+              .text
+          );
+      } else {
+        updateLine(
+          userLine,
+
+          content
+            .inputTranscription
+            .text
+        );
+      }
+    }
+
+
+    // AI transcript
+    if (
+      content
+        .outputTranscription
+        ?.text
+    ) {
+      if (!aiLine) {
+        aiLine =
+          addLine(
+            "AI Ustoz",
+            content
+              .outputTranscription
+              .text
+          );
+      } else {
+        updateLine(
+          aiLine,
+
+          content
+            .outputTranscription
+            .text
+        );
+      }
+    }
+
+
+    // AI audio
     if (
       content.modelTurn?.parts
     ) {
@@ -733,214 +1186,244 @@
         if (
           part.inlineData?.data
         ) {
-          playAudio(
+          playPCM(
             part.inlineData.data
           );
         }
       }
     }
 
+
+    // Turn tugadi
     if (
       content.turnComplete
     ) {
-      if (
-        state.userText.trim()
-      ) {
-        addMessage(
-          "SIZ",
-          state.userText,
-          "user"
-        );
-      }
+      userLine = null;
+      aiLine = null;
 
-      if (
-        state.aiText.trim()
-      ) {
-        addMessage(
-          "IELTS USTOZ",
-          state.aiText,
-          "ai"
-        );
-      }
-
-      state.userText = "";
-      state.aiText = "";
-
-      status(
-        "Siz gapiring...",
+      setStatus(
+        "Ustoz tinglayapti...",
         true
       );
     }
   }
 
-  async function getToken() {
-    const response =
-      await fetch(
-        "/api/live-token",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-          body: "{}"
-        }
-      );
 
-    const data =
-      await response.json();
+  // ===================================================
+  // GEMINI WEBSOCKET
+  // ===================================================
 
-    if (!response.ok) {
-      throw new Error(
-        data.error ||
-        "Gemini token olinmadi."
-      );
-    }
-
-    return data;
-  }
-
-  async function connect(
-    token,
-    model
+  function openSocket(
+    auth
   ) {
-    const protocol =
-      location.protocol ===
-      "https:"
-        ? "wss:"
-        : "ws:";
-
-    const url =
-      `${protocol}//${location.host}/ws/live`;
-
     return new Promise(
-      (resolve, reject) => {
-        socket =
-          new WebSocket(url);
+      (
+        resolve,
+        reject
+      ) => {
 
-        socket.onopen =
+        const url =
+          "wss://generativelanguage.googleapis.com/ws/" +
+          "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained" +
+          "?access_token=" +
+          encodeURIComponent(
+            auth.token
+          );
+
+
+        ws =
+          new WebSocket(
+            url
+          );
+
+
+        let settled =
+          false;
+
+
+        ws.onopen =
           () => {
-            socket.send(
-              JSON.stringify({
-                type:
-                  "auth",
-                token,
-                model
-              })
+            sendSetup(
+              auth.model,
+              auth.voice
             );
-
-            resolve();
           };
 
-        socket.onmessage =
+
+        ws.onmessage =
           event => {
+            let message;
+
+            try {
+              message =
+                JSON.parse(
+                  event.data
+                );
+            } catch {
+              return;
+            }
+
+
+            if (
+              message.setupComplete &&
+              !settled
+            ) {
+              settled =
+                true;
+
+              resolve();
+            }
+
+
             handleMessage(
               event.data
             );
           };
 
-        socket.onerror =
+
+        ws.onerror =
           () => {
-            reject(
-              new Error(
-                "Live WebSocket ulanishida xatolik."
-              )
-            );
+            if (
+              !settled
+            ) {
+              settled =
+                true;
+
+              reject(
+                new Error(
+                  "Gemini Live WebSocket ulanilmadi."
+                )
+              );
+            }
           };
 
-        socket.onclose =
-          () => {
-            connected = false;
 
-            if (running) {
-              status(
-                "Ulanish yopildi",
-                false
+        ws.onclose =
+          event => {
+            ready =
+              false;
+
+            if (
+              !settled
+            ) {
+              settled =
+                true;
+
+              reject(
+                new Error(
+                  `Gemini Live ulanish yopildi (${event.code}).`
+                )
               );
+            }
+
+            if (
+              running
+            ) {
+              stop(false);
             }
           };
       }
     );
   }
 
+
+  // ===================================================
+  // MICROPHONE
+  // ===================================================
+
   async function openMicrophone() {
-    microphoneStream =
+    stream =
       await navigator
         .mediaDevices
         .getUserMedia({
           audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
+            channelCount:
+              1,
+
+            echoCancellation:
+              true,
+
+            noiseSuppression:
+              true,
+
+            autoGainControl:
+              true
           }
         });
 
-    audioContext =
+
+    ctx =
       new AudioContext();
 
-    await audioContext.resume();
+    await ctx.resume();
 
-    microphoneSource =
-      audioContext
-        .createMediaStreamSource(
-          microphoneStream
-        );
+
+    source =
+      ctx.createMediaStreamSource(
+        stream
+      );
+
 
     processor =
-      audioContext
-        .createScriptProcessor(
-          4096,
-          1,
-          1
-        );
+      ctx.createScriptProcessor(
+        4096,
+        1,
+        1
+      );
 
-    silentGain =
-      audioContext.createGain();
 
-    silentGain.gain.value = 0;
+    mute =
+      ctx.createGain();
+
+    mute.gain.value =
+      0;
+
 
     processor.onaudioprocess =
       event => {
+
         if (
           !running ||
-          !connected ||
-          !socket ||
-          socket.readyState !==
+          !ready ||
+          !ws ||
+          ws.readyState !==
             WebSocket.OPEN
         ) {
           return;
         }
 
+
         const input =
-          event.inputBuffer
-            .getChannelData(0);
-
-        const copy =
           new Float32Array(
-            input.length
+            event.inputBuffer
+              .getChannelData(
+                0
+              )
           );
 
-        copy.set(input);
 
-        const audio =
+        const data16k =
           downsample(
-            copy,
-            audioContext
-              .sampleRate
+            input,
+            ctx.sampleRate
           );
 
-        const pcm =
-          floatToPCM(audio);
 
-        socket.send(
+        const bytes =
+          pcm16(
+            data16k
+          );
+
+
+        ws.send(
           JSON.stringify({
             realtimeInput: {
               audio: {
                 data:
-                  bytesToBase64(
-                    pcm
+                  base64FromBytes(
+                    bytes
                   ),
+
                 mimeType:
                   "audio/pcm;rate=16000"
               }
@@ -949,174 +1432,304 @@
         );
       };
 
-    microphoneSource.connect(
+
+    source.connect(
       processor
     );
 
     processor.connect(
-      silentGain
+      mute
     );
 
-    silentGain.connect(
-      audioContext.destination
+    mute.connect(
+      ctx.destination
     );
   }
 
-  async function startCall() {
+
+  // ===================================================
+  // TIMER
+  // ===================================================
+
+  function startTimer() {
+    startedAt =
+      Date.now();
+
+    clearInterval(
+      timer
+    );
+
+    timer =
+      setInterval(
+        () => {
+          const seconds =
+            Math.floor(
+              (
+                Date.now() -
+                startedAt
+              ) / 1000
+            );
+
+          const minutes =
+            Math.floor(
+              seconds / 60
+            );
+
+          const rest =
+            seconds % 60;
+
+          ui.timer.textContent =
+            `${String(
+              minutes
+            ).padStart(
+              2,
+              "0"
+            )}:${String(
+              rest
+            ).padStart(
+              2,
+              "0"
+            )}`;
+        },
+
+        1000
+      );
+  }
+
+
+  function stopTimer() {
+    clearInterval(
+      timer
+    );
+
+    timer = null;
+  }
+
+
+  // ===================================================
+  // START
+  // ===================================================
+
+  async function start() {
     if (running) {
       return;
     }
 
+
     if (
-      !navigator.mediaDevices
+      !navigator
+        .mediaDevices
         ?.getUserMedia
     ) {
-      status(
-        "Brauzer mikrofonni qo‘llamaydi.",
-        false
+      setStatus(
+        "Brauzer mikrofonni qo'llab-quvvatlamaydi."
       );
 
       return;
     }
+
 
     if (
       !window.isSecureContext &&
       location.hostname !==
         "localhost"
     ) {
-      status(
-        "Mikrofon uchun HTTPS kerak.",
-        false
+      setStatus(
+        "Mikrofon uchun HTTPS kerak."
       );
 
       return;
     }
 
-    running = true;
-    connected = false;
 
-    state.userText = "";
-    state.aiText = "";
+    running =
+      true;
 
-    button(true);
+    ready =
+      false;
 
-    status(
-      "Ustozga ulanmoqda...",
-      false
+    outputTime =
+      0;
+
+    userLine =
+      null;
+
+    aiLine =
+      null;
+
+
+    setButton(
+      true
     );
 
+    setStatus(
+      "Ustozga ulanmoqda...",
+      true
+    );
+
+    startTimer();
+
+
     try {
+
       const auth =
         await getToken();
 
-      await connect(
-        auth.token,
-        auth.model
+
+      await openSocket(
+        auth
       );
+
 
       await openMicrophone();
 
-      status(
-        "Ustozga qo‘ng‘iroq qilindi",
+
+      setStatus(
+        "Ustoz tinglayapti...",
         true
       );
 
-      /*
-       * Birinchi savolni Ustozning
-       * o‘zi boshlaydi.
-       */
-      socket.send(
-        JSON.stringify({
-          clientContent: {
-            turns: [
-              {
-                role: "user",
-                parts: [
-                  {
-                    text:
-                      "IELTS Speaking practice ni boshlang. O‘quvchiga sokin va tabiiy tarzda salom bering va Part 1 uchun bitta savol bering."
-                  }
-                ]
-              }
-            ],
-            turnComplete: true
-          }
-        })
-      );
-
     } catch (error) {
+
       console.error(
         error
       );
 
-      status(
+      setStatus(
         error.message ||
-        "Suhbatni boshlashda xatolik.",
-        false
+        "Live Speaking ishga tushmadi."
       );
 
-      await stopCall();
+      await stop(
+        false
+      );
     }
   }
 
-  async function stopCall() {
-    running = false;
-    connected = false;
 
-    button(false);
+  // ===================================================
+  // STOP
+  // ===================================================
 
-    if (processor) {
-      processor.disconnect();
-      processor = null;
-    }
+  async function stop(
+    showStatus = true
+  ) {
+    running =
+      false;
 
-    if (microphoneSource) {
-      microphoneSource.disconnect();
-      microphoneSource = null;
-    }
+    ready =
+      false;
 
-    if (silentGain) {
-      silentGain.disconnect();
-      silentGain = null;
-    }
 
-    if (microphoneStream) {
-      microphoneStream
-        .getTracks()
-        .forEach(track => {
-          track.stop();
-        });
+    stopTimer();
 
-      microphoneStream = null;
-    }
-
-    if (socket) {
-      try {
-        socket.close();
-      } catch {}
-
-      socket = null;
-    }
-
-    if (audioContext) {
-      try {
-        await audioContext.close();
-      } catch {}
-
-      audioContext = null;
-    }
-
-    playbackTime = 0;
-
-    status(
-      "Suhbat tugadi",
+    setButton(
       false
     );
+
+
+    if (ui.timer) {
+      ui.timer.textContent =
+        "00:00";
+    }
+
+
+    try {
+      processor?.disconnect();
+    } catch {}
+
+    processor =
+      null;
+
+
+    try {
+      source?.disconnect();
+    } catch {}
+
+    source =
+      null;
+
+
+    try {
+      mute?.disconnect();
+    } catch {}
+
+    mute =
+      null;
+
+
+    if (stream) {
+      stream
+        .getTracks()
+        .forEach(
+          track =>
+            track.stop()
+        );
+
+      stream =
+        null;
+    }
+
+
+    if (ws) {
+
+      try {
+        if (
+          ws.readyState ===
+          WebSocket.OPEN
+        ) {
+          ws.send(
+            JSON.stringify({
+              realtimeInput: {
+                audioStreamEnd:
+                  true
+              }
+            })
+          );
+        }
+      } catch {}
+
+
+      try {
+        ws.close();
+      } catch {}
+
+
+      ws =
+        null;
+    }
+
+
+    if (ctx) {
+      try {
+        await ctx.close();
+      } catch {}
+
+      ctx =
+        null;
+    }
+
+
+    outputTime =
+      0;
+
+
+    if (showStatus) {
+      setStatus(
+        "Suhbat tugadi."
+      );
+    }
   }
 
+
+  // ===================================================
+  // INIT
+  // ===================================================
+
   function init() {
-    createCard();
+    buildUI();
   }
+
 
   if (
     document.readyState ===
@@ -1129,4 +1742,24 @@
   } else {
     init();
   }
+
+
+  window.addEventListener(
+    "beforeunload",
+    () => {
+
+      if (stream) {
+        stream
+          .getTracks()
+          .forEach(
+            track =>
+              track.stop()
+          );
+      }
+
+      try {
+        ws?.close();
+      } catch {}
+    }
+  );
 })();
