@@ -1,47 +1,676 @@
-<div class="live-voice-card">
+<!doctype html>
+<html lang="uz">
 
-  <div class="small-label">
-    LIVE SPEAKING
-  </div>
+<head>
+  <meta charset="utf-8">
 
-  <h3>
-    Telefon kabi Ustoz bilan gaplashing
-  </h3>
-
-  <p>
-    Mikrofonni yoqing va ingliz tilida
-    tabiiy suhbat qiling.
-  </p>
-
-  <div class="live-controls">
-
-    <button
-      class="button button-primary"
-      id="liveStart"
-    >
-      🎙️ Jonli suhbatni boshlash
-    </button>
-
-    <button
-      class="button button-secondary"
-      id="liveStop"
-      disabled
-    >
-      ⏹ To‘xtatish
-    </button>
-
-  </div>
-
-  <div
-    class="live-status"
-    id="liveStatus"
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
   >
-    Boshlash uchun tugmani bosing.
+
+  <meta
+    name="theme-color"
+    content="#060811"
+  >
+
+  <title>
+    IELTS USTOZ AI
+  </title>
+
+  <link
+    rel="stylesheet"
+    href="/style.css"
+  >
+</head>
+
+<body>
+
+  <div class="app-shell">
+
+    <header class="topbar">
+
+      <div class="brand">
+        <span class="brand-dot"></span>
+        IELTS USTOZ AI
+      </div>
+
+      <div
+        class="status"
+        id="serverStatus"
+      >
+        <span class="status-dot"></span>
+        Tekshirilmoqda...
+      </div>
+
+    </header>
+
+
+    <div class="layout">
+
+      <aside class="sidebar">
+
+        <button
+          class="tab active"
+          data-tab="home"
+        >
+          ⌂
+          <span>
+            Bosh sahifa
+          </span>
+        </button>
+
+        <button
+          class="tab"
+          data-tab="diagnostic"
+        >
+          ◎
+          <span>
+            Diagnostika
+          </span>
+        </button>
+
+        <button
+          class="tab"
+          data-tab="speaking"
+        >
+          🎙
+          <span>
+            Speaking
+          </span>
+        </button>
+
+        <button
+          class="tab"
+          data-tab="listening"
+        >
+          ♫
+          <span>
+            Listening
+          </span>
+        </button>
+
+        <button
+          class="tab"
+          data-tab="reading"
+        >
+          ▤
+          <span>
+            Reading
+          </span>
+        </button>
+
+        <button
+          class="tab"
+          data-tab="chat"
+        >
+          ✦
+          <span>
+            AI Ustoz
+          </span>
+        </button>
+
+      </aside>
+
+
+      <main class="content">
+
+
+        <!-- HOME -->
+
+        <section
+          class="panel tab-panel active"
+          id="home"
+        >
+
+          <div class="hero">
+
+            <div>
+
+              <div class="eyebrow">
+                IELTS • PERSONAL TUTOR
+              </div>
+
+              <h1>
+                IELTS'ni
+                <span>
+                  aqlli
+                </span>
+                o‘rgan.
+              </h1>
+
+              <p>
+                Speaking, Listening,
+                Reading va AI Ustoz —
+                barchasi bitta joyda.
+              </p>
+
+            </div>
+
+            <div class="hero-orb">
+              AI
+            </div>
+
+          </div>
+
+
+          <div class="cards three">
+
+            <button
+              class="feature"
+              data-open="speaking"
+            >
+              <b>
+                🎙 Live Speaking
+              </b>
+
+              <span>
+                Telefon kabi jonli suhbat.
+              </span>
+            </button>
+
+
+            <button
+              class="feature"
+              data-open="diagnostic"
+            >
+              <b>
+                ◎ Diagnostika
+              </b>
+
+              <span>
+                Darajangni tez tekshir.
+              </span>
+            </button>
+
+
+            <button
+              class="feature"
+              data-open="chat"
+            >
+              <b>
+                ✦ AI Ustoz
+              </b>
+
+              <span>
+                Istagan savolingni ber.
+              </span>
+            </button>
+
+          </div>
+
+
+          <div class="info-grid">
+
+            <div class="info">
+              <strong>
+                Real-time
+              </strong>
+
+              <span>
+                Gemini Live audio
+              </span>
+            </div>
+
+
+            <div class="info">
+              <strong>
+                IELTS
+              </strong>
+
+              <span>
+                Speaking feedback
+              </span>
+            </div>
+
+
+            <div class="info">
+              <strong>
+                Secure
+              </strong>
+
+              <span>
+                API kalit serverda
+              </span>
+            </div>
+
+          </div>
+
+        </section>
+
+
+        <!-- DIAGNOSTIC -->
+
+        <section
+          class="panel tab-panel"
+          id="diagnostic"
+        >
+
+          <div class="section-head">
+
+            <div>
+
+              <div class="eyebrow">
+                LEVEL CHECK
+              </div>
+
+              <h2>
+                Tezkor diagnostika
+              </h2>
+
+            </div>
+
+            <span class="pill">
+              5 savol
+            </span>
+
+          </div>
+
+          <div
+            id="diagnosticBox"
+            class="quiz-box"
+          ></div>
+
+        </section>
+
+
+        <!-- SPEAKING -->
+
+        <section
+          class="panel tab-panel"
+          id="speaking"
+        >
+
+          <div class="section-head">
+
+            <div>
+
+              <div class="eyebrow">
+                SPEAKING
+              </div>
+
+              <h2>
+                Gapir. Ustoz eshitadi.
+              </h2>
+
+              <p>
+                Pastdagi Live Speaking
+                aynan shu Speaking
+                bo‘limining ichida.
+              </p>
+
+            </div>
+
+            <span
+              class="pill lime"
+              id="liveState"
+            >
+              OFFLINE
+            </span>
+
+          </div>
+
+
+          <!-- LIVE SPEAKING -->
+
+          <div class="live-card">
+
+            <div class="live-top">
+
+              <div class="live-avatar">
+                <span></span>
+              </div>
+
+              <div>
+
+                <h3>
+                  Live IELTS Ustoz
+                </h3>
+
+                <p>
+                  Tabiiy inglizcha suhbat
+                  • real-time audio
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <div
+              class="wave"
+              id="wave"
+            >
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+            </div>
+
+
+            <div
+              class="live-status"
+              id="liveStatus"
+            >
+              Boshlash uchun mikrofon
+              tugmasini bosing.
+            </div>
+
+
+            <div class="live-actions">
+
+              <button
+                class="btn primary call-btn"
+                id="liveStart"
+              >
+                🎙 Jonli suhbatni boshlash
+              </button>
+
+              <button
+                class="btn danger"
+                id="liveStop"
+                disabled
+              >
+                ■ To‘xtatish
+              </button>
+
+            </div>
+
+
+            <div
+              class="conversation"
+              id="liveConversation"
+            ></div>
+
+          </div>
+
+
+          <!-- NORMAL RECORDER -->
+
+          <div class="practice-card">
+
+            <div class="practice-head">
+
+              <h3>
+                Oddiy Speaking recorder
+              </h3>
+
+              <span id="recordTimer">
+                00:00
+              </span>
+
+            </div>
+
+
+            <p class="muted">
+              Live ishlatmasdan ham
+              javob yozib, keyin AI
+              baholatish mumkin.
+            </p>
+
+
+            <div
+              class="question"
+              id="speakingQuestion"
+            >
+              What do you usually
+              do in your free time?
+            </div>
+
+
+            <div class="record-actions">
+
+              <button
+                class="btn"
+                id="recordBtn"
+              >
+                ● Yozishni boshlash
+              </button>
+
+              <button
+                class="btn ghost"
+                id="gradeBtn"
+                disabled
+              >
+                AI baholash
+              </button>
+
+            </div>
+
+
+            <div
+              class="transcript"
+              id="transcript"
+            >
+              Transcript shu yerda
+              chiqadi.
+            </div>
+
+
+            <div
+              id="gradeResult"
+            ></div>
+
+          </div>
+
+        </section>
+
+
+        <!-- LISTENING -->
+
+        <section
+          class="panel tab-panel"
+          id="listening"
+        >
+
+          <div class="section-head">
+
+            <div>
+
+              <div class="eyebrow">
+                LISTENING
+              </div>
+
+              <h2>
+                Listening mashq
+              </h2>
+
+            </div>
+
+            <span class="pill">
+              Practice
+            </span>
+
+          </div>
+
+
+          <div class="lesson-card">
+
+            <h3>
+              Everyday English
+            </h3>
+
+            <p>
+              Audio uchun Play tugmasini
+              bosing va keyin savollarga
+              javob bering.
+            </p>
+
+            <button
+              class="btn primary"
+              id="listenPlay"
+            >
+              ▶ Play
+            </button>
+
+            <div
+              class="listen-script"
+              id="listenScript"
+            >
+              Audio preview:
+              “Good morning. Today we are
+              talking about study routines...”
+            </div>
+
+          </div>
+
+
+          <div
+            class="mcq"
+            id="listeningQuiz"
+          ></div>
+
+        </section>
+
+
+        <!-- READING -->
+
+        <section
+          class="panel tab-panel"
+          id="reading"
+        >
+
+          <div class="section-head">
+
+            <div>
+
+              <div class="eyebrow">
+                READING
+              </div>
+
+              <h2>
+                Reading mashq
+              </h2>
+
+            </div>
+
+            <span class="pill">
+              A2–B1
+            </span>
+
+          </div>
+
+
+          <article
+            class="reading-text"
+          >
+
+            <h3>
+              Learning with short
+              daily sessions
+            </h3>
+
+            <p>
+              Many learners try to study
+              for several hours at once.
+              A shorter daily routine can
+              be easier to maintain.
+              Ten or twenty focused minutes
+              can help a learner build a
+              habit and notice progress.
+            </p>
+
+            <p>
+              The most useful routine is
+              one that can be repeated.
+              A learner can read a short
+              article, write five new words,
+              and then use those words in
+              two sentences.
+            </p>
+
+          </article>
+
+
+          <div
+            class="mcq"
+            id="readingQuiz"
+          ></div>
+
+        </section>
+
+
+        <!-- CHAT -->
+
+        <section
+          class="panel tab-panel"
+          id="chat"
+        >
+
+          <div class="section-head">
+
+            <div>
+
+              <div class="eyebrow">
+                AI USTOZ
+              </div>
+
+              <h2>
+                Ustoz bilan yozishma
+              </h2>
+
+            </div>
+
+            <span class="pill lime">
+              Gemini
+            </span>
+
+          </div>
+
+
+          <div
+            class="chat-window"
+            id="chatWindow"
+          >
+
+            <div class="msg ai">
+              Salom! Men IELTS Ustozman.
+              Speaking, grammar yoki
+              vocabulary bo‘yicha savolingni
+              yoz.
+            </div>
+
+          </div>
+
+
+          <form
+            class="chat-form"
+            id="chatForm"
+          >
+
+            <input
+              id="chatInput"
+              autocomplete="off"
+              placeholder="Masalan: IELTS Speaking Part 2 ni tushuntir..."
+            />
+
+            <button
+              class="btn primary"
+            >
+              Yuborish
+            </button>
+
+          </form>
+
+        </section>
+
+      </main>
+
+    </div>
+
   </div>
 
-  <div
-    class="live-transcript"
-    id="liveTranscript"
-  ></div>
 
-</div>
+  <script src="/app.js"></script>
+
+</body>
+
+</html>
