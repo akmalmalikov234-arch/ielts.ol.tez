@@ -3,35 +3,53 @@ import multer from "multer";
 import fs from "fs/promises";
 import path from "path";
 import http from "http";
-import { WebSocketServer, WebSocket } from "ws";
+import WebSocket, {
+  WebSocketServer
+} from "ws";
 
 const app = express();
-const server = http.createServer(app);
-
-const wss = new WebSocketServer({
-  server,
-  path: "/ws/live"
-});
 
 const PORT = Number(
   process.env.PORT || 10000
 );
 
+/* =========================
+   API KEYS
+========================= */
+
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY || "";
+
 const GEMINI_API_KEY =
-  process.env.GEMINI_API_KEY ||
-  process.env.GOOGLE_API_KEY;
+  process.env.GEMINI_API_KEY || "";
+
+/* =========================
+   MODELS
+========================= */
 
 const AI_MODEL =
   process.env.AI_MODEL ||
-  "gemini-3.8-flash";
+  "gpt-5.6-luna";
 
 const TRANSCRIBE_MODEL =
   process.env.TRANSCRIBE_MODEL ||
-  "gemini-3.8-flash";
+  "gpt-4o-transcribe";
+
+const TTS_MODEL =
+  process.env.TTS_MODEL ||
+  "gpt-4o-mini-tts";
 
 const LIVE_MODEL =
   process.env.LIVE_MODEL ||
   "gemini-3.8-live";
+
+const LIVE_VOICE =
+  process.env.LIVE_VOICE ||
+  "Kore";
+
+/* =========================
+   PATHS
+========================= */
 
 const PUBLIC_DIR =
   path.join(
@@ -52,6 +70,10 @@ await fs.mkdir(
   }
 );
 
+/* =========================
+   UPLOAD
+========================= */
+
 const upload =
   multer({
     dest: uploadDir,
@@ -62,9 +84,13 @@ const upload =
     }
   });
 
+/* =========================
+   MIDDLEWARE
+========================= */
+
 app.use(
   express.json({
-    limit: "2mb"
+    limit: "1mb"
   })
 );
 
@@ -74,18 +100,15 @@ app.use(
   )
 );
 
-
 /* =========================
-   GEMINI
+   OPENAI KEY CHECK
 ========================= */
 
-function requireGemini(res) {
-
-  if (!GEMINI_API_KEY) {
-
+function requireOpenAIKey(res) {
+  if (!OPENAI_API_KEY) {
     res.status(500).json({
       error:
-        "GEMINI_API_KEY Render Environment Variables ichida sozlanmagan."
+        "OPENAI_API_KEY sozlanmagan."
     });
 
     return false;
@@ -94,11 +117,81 @@ function requireGemini(res) {
   return true;
 }
 
+/* =========================
+   GEMINI KEY CHECK
+========================= */
+
+function requireGeminiKey(res) {
+  if (!GEMINI_API_KEY) {
+    res.status(500).json({
+      error:
+        "GEMINI_API_KEY sozlanmagan."
+    });
+
+    return false;
+  }
+
+  return true;
+}
+
+/* =========================
+   OPENAI REQUEST
+========================= */
+
+async function openaiRequest(
+  endpoint,
+  body,
+  headers = {}
+) {
+  const response =
+    await fetch(
+      `https://api.openai.com${endpoint}`,
+      {
+        method: "POST",
+
+        headers: {
+          Authorization:
+            `Bearer ${OPENAI_API_KEY}`,
+
+          ...headers
+        },
+
+        body
+      }
+    );
+
+  const text =
+    await response.text();
+
+  let data;
+
+  try {
+    data =
+      JSON.parse(text);
+  } catch {
+    data = {
+      raw: text
+    };
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error?.message ||
+      data?.raw ||
+      `OpenAI error ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+/* =========================
+   TEACHER PROMPT
+========================= */
 
 function teacherPrompt(
   profile = {}
 ) {
-
   return `
 Sen IELTS USTOZ AI nomli
 o'zbekcha IELTS o'qituvchisisan.
@@ -107,10 +200,12 @@ Uslubing:
 
 - sokin
 - samimiy
+- kulgili
 - aqlli
 - realistik
 - motivatsion
-- ba'zan yengil hazil qil
+
+Ba'zan yengil hazil qil.
 
 O'quvchini kamsitma.
 Haqorat qilma.
@@ -128,240 +223,77 @@ ${profile.target || "noma'lum"}
 Muddat:
 ${profile.deadline || "noma'lum"}
 
+Har javobda imkon qadar
+aniq keyingi qadam ber.
+
 IELTS ballarini rasmiy natija
 sifatida ko'rsatma.
+
 Taxminiy baho ekanini ayt.
-
-Javoblarni tushunarli,
-amaliy va foydali qil.
 `.trim();
-
 }
 
-
-async function geminiGenerate({
-
-  model = AI_MODEL,
-
-  contents,
-
-  systemInstruction,
-
-  responseSchema
-
-}) {
-
-  if (!GEMINI_API_KEY) {
-
-    throw new Error(
-      "GEMINI_API_KEY sozlanmagan."
-    );
-
-  }
-
-
-  const body = {
-    contents
-  };
-
-
-  if (systemInstruction) {
-
-    body.systemInstruction = {
-      parts: [
-        {
-          text:
-            systemInstruction
-        }
-      ]
-    };
-
-  }
-
-
-  if (responseSchema) {
-
-    body.generationConfig = {
-
-      responseMimeType:
-        "application/json",
-
-      responseSchema
-
-    };
-
-  } else {
-
-    body.generationConfig = {
-      temperature: 0.5
-    };
-
-  }
-
-
-  const response =
-    await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-
-        method: "POST",
-
-        headers: {
-
-          "x-goog-api-key":
-            GEMINI_API_KEY,
-
-          "Content-Type":
-            "application/json"
-
-        },
-
-        body:
-          JSON.stringify(body)
-
-      }
-    );
-
-
-  const raw =
-    await response.text();
-
-
-  let data;
-
-  try {
-
-    data =
-      JSON.parse(raw);
-
-  } catch {
-
-    data = {
-      raw
-    };
-
-  }
-
-
-  if (!response.ok) {
-
-    throw new Error(
-      data?.error?.message ||
-      data?.raw ||
-      `Gemini error ${response.status}`
-    );
-
-  }
-
-
-  const output =
-    data
-      ?.candidates?.[0]
-      ?.content?.parts
-      ?.map(
-        part =>
-          part.text || ""
-      )
-      .join("")
-      .trim();
-
-
-  if (!output) {
-
-    throw new Error(
-      "Gemini bo'sh javob qaytardi."
-    );
-
-  }
-
-
-  return output;
-
-}
-
-
-/* =========================
+/* =========================================================
    HEALTH
-========================= */
+========================================================= */
 
 app.get(
   "/api/health",
   (req, res) => {
-
     res.json({
-
       ok: true,
-
       service:
         "IELTS USTOZ AI",
-
-      geminiConfigured:
-        Boolean(
-          GEMINI_API_KEY
-        ),
-
+      geminiLive:
+        Boolean(GEMINI_API_KEY),
       liveModel:
         LIVE_MODEL
-
     });
-
   }
 );
 
-
-/* =========================
+/* =========================================================
    CHAT
-========================= */
+========================================================= */
 
 app.post(
   "/api/chat",
   async (req, res) => {
-
     try {
-
       if (
-        !requireGemini(res)
-      ) return;
-
-
-      const {
-
-        message,
-
-        history = [],
-
-        profile = {}
-
-      } = req.body || {};
-
-
-      if (
-        !message?.trim()
+        !requireOpenAIKey(res)
       ) {
-
-        return res
-          .status(400)
-          .json({
-            error:
-              "message kerak"
-          });
-
+        return;
       }
 
+      const {
+        message,
+        history = [],
+        profile = {}
+      } = req.body || {};
 
-      const contents =
-        history
+      if (!message?.trim()) {
+        return res.status(400).json({
+          error:
+            "message kerak"
+        });
+      }
+
+      const input = [
+        ...history
           .slice(-12)
           .map(item => ({
-
             role:
               item.role ===
               "assistant"
-                ? "model"
+                ? "assistant"
                 : "user",
 
-            parts: [
+            content: [
               {
+                type:
+                  "input_text",
+
                 text:
                   String(
                     item.content ||
@@ -369,389 +301,294 @@ app.post(
                   )
               }
             ]
+          })),
 
-          }));
+        {
+          role: "user",
 
+          content: [
+            {
+              type:
+                "input_text",
 
-      contents.push({
+              text: message
+            }
+          ]
+        }
+      ];
 
-        role: "user",
+      const result =
+        await openaiRequest(
+          "/v1/responses",
 
-        parts: [
-          {
-            text: message
-          }
-        ]
+          JSON.stringify({
+            model: AI_MODEL,
 
-      });
+            instructions:
+              teacherPrompt(
+                profile
+              ) +
+              `
 
+O'quvchi bilan oddiy suhbat qil.
 
-      const reply =
-        await geminiGenerate({
-
-          contents,
-
-          systemInstruction:
-
-            teacherPrompt(
-              profile
-            ) +
-
-            `
-
-O'quvchi bilan oddiy
-suhbat qil.
-
-IELTS bo'yicha
-tushuntir.
+IELTS bo'yicha tushuntir.
 
 Xatolarini ko'rsat.
 
-Keraksiz uzun javob
-bermasdan amaliy
-maslahat ber.
+Keraksiz uzun javob bermasdan,
+amaliy maslahat ber.
 
-Agar savol noaniq
-bo'lsa, bitta
-aniqlashtiruvchi
-savol ber.
-`
+Agar savol noaniq bo'lsa,
+bitta aniqlashtiruvchi savol ber.
+`,
 
-        });
+            input,
 
+            max_output_tokens:
+              900
+          }),
+
+          {
+            "Content-Type":
+              "application/json"
+          }
+        );
 
       res.json({
-        reply
+        reply:
+          result.output_text ||
+          ""
       });
 
-
     } catch (error) {
-
       res.status(500).json({
         error:
           error.message
       });
-
     }
-
   }
 );
 
-
-/* =========================
+/* =========================================================
    DIAGNOSTIC
-========================= */
-
-const diagnosticSchema = {
-
-  type: "object",
-
-  properties: {
-
-    message: {
-      type: "string"
-    },
-
-    band: {
-      type: "number"
-    },
-
-    strengths: {
-      type: "array",
-      items: {
-        type: "string"
-      }
-    },
-
-    weaknesses: {
-      type: "array",
-      items: {
-        type: "string"
-      }
-    },
-
-    next_steps: {
-      type: "array",
-      items: {
-        type: "string"
-      }
-    },
-
-    corrected_answer: {
-      type: "string"
-    }
-
-  },
-
-  required: [
-
-    "message",
-
-    "band",
-
-    "strengths",
-
-    "weaknesses",
-
-    "next_steps",
-
-    "corrected_answer"
-
-  ]
-
-};
-
+========================================================= */
 
 app.post(
   "/api/diagnostic",
   async (req, res) => {
-
     try {
-
       if (
-        !requireGemini(res)
-      ) return;
-
+        !requireOpenAIKey(res)
+      ) {
+        return;
+      }
 
       const {
-
         profile = {},
-
         answers = []
-
       } = req.body || {};
 
-
-      const result =
-        await geminiGenerate({
-
-          contents: [
-
-            {
-
-              role: "user",
-
-              parts: [
-
-                {
-
-                  text:
-                    JSON.stringify({
-                      profile,
-                      answers
-                    })
-
-                }
-
-              ]
-
-            }
-
-          ],
-
-          systemInstruction:
-
-            teacherPrompt(
-              profile
-            ) +
-
-            `
+      const prompt =
+        teacherPrompt(
+          profile
+        ) +
+        `
 
 Sen IELTS diagnostika
 o'qituvchisisan.
 
-O'quvchi javoblarini
-tahlil qil.
+O'quvchi javoblarini tahlil qil.
 
-Taxminiy IELTS band
-ber.
+Taxminiy IELTS band ber.
 
-Bu rasmiy IELTS
-natijasi emas.
+Bu rasmiy IELTS natijasi emas.
 
-Aniqla:
+Quyidagilarni aniqlashga harakat qil:
 
-- kuchli tomonlar
-- zaif tomonlar
+- kuchli tomonlari
+- zaif tomonlari
 - taxminiy daraja
 - keyingi mashqlar
 
-Javob o'zbek tilida
-bo'lsin.
-`,
+Javob o'zbek tilida bo'lsin.
 
-          responseSchema:
-            diagnosticSchema
+Ustoz kabi sokin va kulgili
+uslubdan foydalan.
+`;
 
-        });
+      const result =
+        await openaiRequest(
+          "/v1/responses",
 
+          JSON.stringify({
+            model:
+              AI_MODEL,
+
+            instructions:
+              prompt,
+
+            input: [
+              {
+                role: "user",
+
+                content: [
+                  {
+                    type:
+                      "input_text",
+
+                    text:
+                      JSON.stringify({
+                        profile,
+                        answers
+                      })
+                  }
+                ]
+              }
+            ],
+
+            text: {
+              format: {
+                type:
+                  "json_schema",
+
+                name:
+                  "diagnostic_result",
+
+                strict: true,
+
+                schema: {
+                  type:
+                    "object",
+
+                  additionalProperties:
+                    false,
+
+                  properties: {
+                    message: {
+                      type:
+                        "string"
+                    },
+
+                    band: {
+                      type:
+                        "number"
+                    },
+
+                    strengths: {
+                      type:
+                        "array",
+
+                      items: {
+                        type:
+                          "string"
+                      }
+                    },
+
+                    weaknesses: {
+                      type:
+                        "array",
+
+                      items: {
+                        type:
+                          "string"
+                      }
+                    },
+
+                    next_steps: {
+                      type:
+                        "array",
+
+                      items: {
+                        type:
+                          "string"
+                      }
+                    },
+
+                    corrected_answer: {
+                      type:
+                        "string"
+                    }
+                  },
+
+                  required: [
+                    "message",
+                    "band",
+                    "strengths",
+                    "weaknesses",
+                    "next_steps",
+                    "corrected_answer"
+                  ]
+                }
+              }
+            }
+          }),
+
+          {
+            "Content-Type":
+              "application/json"
+          }
+        );
+
+      const text =
+        result.output_text ||
+        "";
 
       res.json(
-        JSON.parse(result)
+        JSON.parse(text)
       );
 
-
     } catch (error) {
-
       res.status(500).json({
         error:
           error.message
       });
-
     }
-
   }
 );
 
-
-/* =========================
+/* =========================================================
    SPEAKING GRADE
-========================= */
-
-const speakingSchema = {
-
-  type: "object",
-
-  properties: {
-
-    message: {
-      type: "string"
-    },
-
-    band: {
-      type: "number"
-    },
-
-    strengths: {
-      type: "array",
-      items: {
-        type: "string"
-      }
-    },
-
-    weaknesses: {
-      type: "array",
-      items: {
-        type: "string"
-      }
-    },
-
-    next_steps: {
-      type: "array",
-      items: {
-        type: "string"
-      }
-    },
-
-    corrected_answer: {
-      type: "string"
-    }
-
-  },
-
-  required: [
-
-    "message",
-
-    "band",
-
-    "strengths",
-
-    "weaknesses",
-
-    "next_steps",
-
-    "corrected_answer"
-
-  ]
-
-};
-
+========================================================= */
 
 app.post(
   "/api/speaking/grade",
   async (req, res) => {
-
     try {
-
       if (
-        !requireGemini(res)
-      ) return;
-
+        !requireOpenAIKey(res)
+      ) {
+        return;
+      }
 
       const {
-
         question,
-
         transcript,
-
         profile = {}
-
       } = req.body || {};
-
 
       if (
         !question ||
         !transcript
       ) {
-
-        return res
-          .status(400)
-          .json({
-
-            error:
-              "question va transcript kerak"
-
-          });
-
+        return res.status(400).json({
+          error:
+            "question va transcript kerak"
+        });
       }
 
-
-      const result =
-        await geminiGenerate({
-
-          contents: [
-
-            {
-
-              role: "user",
-
-              parts: [
-
-                {
-
-                  text:
-                    JSON.stringify({
-
-                      question,
-
-                      transcript
-
-                    })
-
-                }
-
-              ]
-
-            }
-
-          ],
-
-          systemInstruction:
-
-            teacherPrompt(
-              profile
-            ) +
-
-            `
+      const instructions =
+        teacherPrompt(
+          profile
+        ) +
+        `
 
 Sen IELTS Speaking
 o'qituvchisisan.
 
-O'quvchi javobini
-IELTS Speaking
-mezonlari asosida
-tahlil qil.
+O'quvchining javobini
+IELTS Speaking mezonlari
+asosida tahlil qil.
 
 Bahola:
 
@@ -760,157 +597,229 @@ Bahola:
 3. Grammar
 4. Pronunciation
 
-Faqat transcript
-mavjud bo'lsa,
-pronunciationni
-aniq baholay
+Lekin faqat transcript mavjud bo'lsa,
+pronunciationni aniq baholay
 olmasligingni ayt.
 
 Taxminiy band:
 0 dan 9 gacha.
 
-0.5 qadam bilan
-bahola.
+0.5 qadam bilan bahola.
 
-O'zbekcha, sokin
-va amaliy feedback
-ber.
-`,
+O'quvchiga o'zbekcha
+sokin va kulgili tarzda
+feedback ber.
+`;
 
-          responseSchema:
-            speakingSchema
+      const result =
+        await openaiRequest(
+          "/v1/responses",
 
-        });
+          JSON.stringify({
+            model:
+              AI_MODEL,
 
+            instructions,
+
+            input: [
+              {
+                role: "user",
+
+                content: [
+                  {
+                    type:
+                      "input_text",
+
+                    text:
+                      JSON.stringify({
+                        question,
+                        transcript
+                      })
+                  }
+                ]
+              }
+            ],
+
+            text: {
+              format: {
+                type:
+                  "json_schema",
+
+                name:
+                  "speaking_grade",
+
+                strict: true,
+
+                schema: {
+                  type:
+                    "object",
+
+                  additionalProperties:
+                    false,
+
+                  properties: {
+                    message: {
+                      type:
+                        "string"
+                    },
+
+                    band: {
+                      type:
+                        "number"
+                    },
+
+                    strengths: {
+                      type:
+                        "array",
+
+                      items: {
+                        type:
+                          "string"
+                      }
+                    },
+
+                    weaknesses: {
+                      type:
+                        "array",
+
+                      items: {
+                        type:
+                          "string"
+                      }
+                    },
+
+                    next_steps: {
+                      type:
+                        "array",
+
+                      items: {
+                        type:
+                          "string"
+                      }
+                    },
+
+                    corrected_answer: {
+                      type:
+                        "string"
+                    }
+                  },
+
+                  required: [
+                    "message",
+                    "band",
+                    "strengths",
+                    "weaknesses",
+                    "next_steps",
+                    "corrected_answer"
+                  ]
+                }
+              }
+            }
+          }),
+
+          {
+            "Content-Type":
+              "application/json"
+          }
+        );
 
       res.json(
-        JSON.parse(result)
+        JSON.parse(
+          result.output_text
+        )
       );
 
-
     } catch (error) {
-
       res.status(500).json({
         error:
           error.message
       });
-
     }
-
   }
 );
 
-
-/* =========================
+/* =========================================================
    AUDIO TRANSCRIPTION
-========================= */
+========================================================= */
 
 app.post(
   "/api/transcribe",
   upload.single("audio"),
 
   async (req, res) => {
-
     let filePath;
 
     try {
-
       if (
-        !requireGemini(res)
-      ) return;
-
-
-      if (!req.file) {
-
-        return res
-          .status(400)
-          .json({
-
-            error:
-              "audio fayl kerak"
-
-          });
-
+        !requireOpenAIKey(res)
+      ) {
+        return;
       }
 
+      if (!req.file) {
+        return res.status(400).json({
+          error:
+            "audio fayl kerak"
+        });
+      }
 
       filePath =
         req.file.path;
-
 
       const bytes =
         await fs.readFile(
           filePath
         );
 
+      const form =
+        new FormData();
 
-      const mimeType =
-        req.file.mimetype ||
-        "audio/webm";
+      form.append(
+        "model",
+        TRANSCRIBE_MODEL
+      );
 
+      form.append(
+        "language",
+        "en"
+      );
 
-      const transcript =
-        await geminiGenerate({
+      form.append(
+        "file",
 
-          model:
-            TRANSCRIBE_MODEL,
+        new Blob(
+          [bytes],
+          {
+            type:
+              req.file.mimetype ||
+              "audio/webm"
+          }
+        ),
 
-          contents: [
+        req.file.originalname ||
+        "speaking.webm"
+      );
 
-            {
-
-              role: "user",
-
-              parts: [
-
-                {
-
-                  text:
-                    "Bu audio ichidagi inglizcha nutqni aniq transcript qil. Faqat aytilgan so'zlarni yoz. Izoh bermagin."
-
-                },
-
-                {
-
-                  inlineData: {
-
-                    mimeType,
-
-                    data:
-                      bytes.toString(
-                        "base64"
-                      )
-
-                  }
-
-                }
-
-              ]
-
-            }
-
-          ]
-
-        });
-
+      const data =
+        await openaiRequest(
+          "/v1/audio/transcriptions",
+          form
+        );
 
       res.json({
         text:
-          transcript
+          data.text ||
+          ""
       });
 
-
     } catch (error) {
-
       res.status(500).json({
         error:
           error.message
       });
 
     } finally {
-
       if (filePath) {
-
         await fs.rm(
           filePath,
           {
@@ -919,565 +828,481 @@ app.post(
         ).catch(
           () => {}
         );
-
       }
-
     }
-
   }
 );
 
+/* =========================================================
+   TEXT TO SPEECH
+========================================================= */
 
-/* =========================
-   GEMINI LIVE WEBSOCKET
-========================= */
+app.post(
+  "/api/tts",
+  async (req, res) => {
+    try {
+      if (
+        !requireOpenAIKey(res)
+      ) {
+        return;
+      }
 
-wss.on(
-  "connection",
-  browserSocket => {
+      const {
+        text,
+        voice = "coral"
+      } = req.body || {};
 
-    if (!GEMINI_API_KEY) {
+      if (!text?.trim()) {
+        return res.status(400).json({
+          error:
+            "text kerak"
+        });
+      }
 
-      browserSocket.close(
-        1011,
-        "GEMINI_API_KEY sozlanmagan"
+      const response =
+        await fetch(
+          "https://api.openai.com/v1/audio/speech",
+          {
+            method: "POST",
+
+            headers: {
+              Authorization:
+                `Bearer ${OPENAI_API_KEY}`,
+
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify({
+                model:
+                  TTS_MODEL,
+
+                voice,
+
+                input:
+                  text.slice(
+                    0,
+                    4000
+                  ),
+
+                response_format:
+                  "mp3"
+              })
+          }
+        );
+
+      if (!response.ok) {
+        throw new Error(
+          await response.text()
+        );
+      }
+
+      const buffer =
+        Buffer.from(
+          await response.arrayBuffer()
+        );
+
+      res.setHeader(
+        "Content-Type",
+        "audio/mpeg"
       );
+
+      res.send(buffer);
+
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+/* =========================================================
+   GEMINI LIVE WEBSOCKET
+========================================================= */
+
+const liveWss =
+  new WebSocketServer({
+    noServer: true
+  });
+
+function sendSocketError(
+  socket,
+  message
+) {
+  if (
+    socket.readyState ===
+    WebSocket.OPEN
+  ) {
+    socket.send(
+      JSON.stringify({
+        type: "error",
+        error: message
+      })
+    );
+  }
+}
+
+liveWss.on(
+  "connection",
+  (browserSocket) => {
+    if (!GEMINI_API_KEY) {
+      sendSocketError(
+        browserSocket,
+        "GEMINI_API_KEY Render Environment Variables ichida sozlanmagan."
+      );
+
+      browserSocket.close();
 
       return;
     }
 
-
-    let geminiSocket;
-
-    let ready = false;
-
-    let profile = {};
-
-
-    const sendBrowser =
-      payload => {
-
-        if (
-          browserSocket.readyState ===
-          WebSocket.OPEN
-        ) {
-
-          browserSocket.send(
-            JSON.stringify(
-              payload
-            )
-          );
-
-        }
-
-      };
-
-
     const geminiUrl =
-      `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(
+      "wss://generativelanguage.googleapis.com/ws/" +
+      "google.ai.generativelanguage.v1beta." +
+      "GenerativeService.BidiGenerateContent" +
+      `?key=${encodeURIComponent(
         GEMINI_API_KEY
       )}`;
 
-
-    geminiSocket =
+    const geminiSocket =
       new WebSocket(
         geminiUrl
       );
 
+    let geminiReady =
+      false;
 
     geminiSocket.on(
       "open",
       () => {
+        const setupMessage = {
+          setup: {
+            model:
+              `models/${LIVE_MODEL}`,
 
-        geminiSocket.send(
+            generationConfig: {
+              responseModalities: [
+                "AUDIO"
+              ],
 
-          JSON.stringify({
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName:
+                      LIVE_VOICE
+                  }
+                }
+              },
 
-            setup: {
+              inputAudioTranscription: {},
 
-              model:
-                `models/${LIVE_MODEL}`,
+              outputAudioTranscription: {}
+            },
 
-              responseModalities:
-                ["AUDIO"],
+            systemInstruction: {
+              parts: [
+                {
+                  text: `
+Sen IELTS USTOZ AI'san.
 
-              inputAudioTranscription:
-                {},
+Sen real-time IELTS Speaking
+ustozisan.
 
-              outputAudioTranscription:
-                {},
+O'quvchi bilan huddi telefonda
+gaplashayotgandek suhbat qil.
 
-              systemInstruction: {
+Javoblaring:
+- sokin
+- tabiiy
+- qisqa
+- samimiy
+- aniq
+- motivatsion
 
-                parts: [
+O'quvchi gapirayotgan paytda
+uni bo'lma.
 
-                  {
+U gapini tugatgach javob ber.
 
-                    text:
+Keraksiz uzun monolog qilma.
 
-                      `${teacherPrompt(
-                        profile
-                      )}
-
-Bu real-time
-IELTS Speaking
-suhbatidir.
-
-Sokin, tabiiy va
-qisqa gapir.
-
-O'quvchiga navbat
-ber.
+IELTS Speaking mashqi qil.
 
 Savol ber.
 
-Javobini tingla.
+O'quvchining javobini tingla.
 
-Kerak bo'lsa
+Kerak bo'lsa inglizcha xatosini
 muloyim tuzat.
 
-Telefon orqali
-suhbat qilayotgandek
-tabiiy gaplash.`
+O'quvchi o'zbekcha gapirsa,
+o'zbekcha tushuntir.
 
-                  }
+IELTS savollarini inglizcha
+berishing mumkin.
 
-                ]
+Oddiy suhbatni tabiiy davom ettir.
 
-              },
-
-              generationConfig: {
-
-                speechConfig: {
-
-                  voiceConfig: {
-
-                    prebuiltVoiceConfig: {
-
-                      voiceName:
-                        "Kore"
-
-                    }
-
-                  }
-
+Ovoz ohanging sokin va
+ustozona bo'lsin.
+`.trim()
                 }
-
-              }
-
+              ]
             }
+          }
+        };
 
-          })
-
+        geminiSocket.send(
+          JSON.stringify(
+            setupMessage
+          )
         );
 
-      }
-    );
-
-
-    geminiSocket.on(
-      "message",
-      data => {
-
-        let message;
-
-        try {
-
-          message =
-            JSON.parse(
-              data.toString()
-            );
-
-        } catch {
-
-          return;
-
-        }
-
-
-        if (
-          message.setupComplete
-        ) {
-
-          ready = true;
-
-          sendBrowser({
-            type: "ready"
-          });
-
-          return;
-
-        }
-
-
-        const content =
-          message.serverContent;
-
-
-        if (
-          content?.interrupted
-        ) {
-
-          sendBrowser({
-            type:
-              "interrupted"
-          });
-
-        }
-
-
-        if (
-          content
-            ?.inputTranscription
-            ?.text
-        ) {
-
-          sendBrowser({
-
-            type:
-              "input_transcript",
-
-            text:
-              content
-                .inputTranscription
-                .text
-
-          });
-
-        }
-
-
-        if (
-          content
-            ?.outputTranscription
-            ?.text
-        ) {
-
-          sendBrowser({
-
-            type:
-              "output_transcript",
-
-            text:
-              content
-                .outputTranscription
-                .text
-
-          });
-
-        }
-
-
-        if (
-          content
-            ?.modelTurn
-            ?.parts
-        ) {
-
-          for (
-            const part
-            of content.modelTurn.parts
-          ) {
-
-            if (
-              part
-                .inlineData
-                ?.data
-            ) {
-
-              sendBrowser({
-
-                type:
-                  "audio",
-
-                mimeType:
-                  part.inlineData
-                    .mimeType ||
-                  "audio/pcm;rate=24000",
-
-                data:
-                  part.inlineData
-                    .data
-
-              });
-
-            }
-
-          }
-
-        }
-
-
-        if (
-          content?.turnComplete
-        ) {
-
-          sendBrowser({
-
-            type:
-              "turn_complete"
-
-          });
-
-        }
-
-      }
-    );
-
-
-    geminiSocket.on(
-      "error",
-      error => {
-
-        sendBrowser({
-
-          type: "error",
-
-          message:
-            error.message ||
-            "Gemini Live xatosi"
-
-        });
-
-      }
-    );
-
-
-    geminiSocket.on(
-      "close",
-      (code, reason) => {
-
-        sendBrowser({
-
-          type: "closed",
-
-          code,
-
-          reason:
-            reason?.toString() ||
-            ""
-
-        });
-
+        geminiReady = true;
 
         if (
           browserSocket.readyState ===
           WebSocket.OPEN
         ) {
-
-          browserSocket.close();
-
+          browserSocket.send(
+            JSON.stringify({
+              type:
+                "connected",
+              model:
+                LIVE_MODEL
+            })
+          );
         }
-
       }
     );
 
+    geminiSocket.on(
+      "message",
+      (data) => {
+        if (
+          browserSocket.readyState ===
+          WebSocket.OPEN
+        ) {
+          browserSocket.send(
+            data.toString()
+          );
+        }
+      }
+    );
+
+    geminiSocket.on(
+      "error",
+      (error) => {
+        console.error(
+          "Gemini Live error:",
+          error.message
+        );
+
+        sendSocketError(
+          browserSocket,
+          error.message
+        );
+      }
+    );
+
+    geminiSocket.on(
+      "close",
+      (code, reason) => {
+        if (
+          browserSocket.readyState ===
+          WebSocket.OPEN
+        ) {
+          browserSocket.send(
+            JSON.stringify({
+              type:
+                "gemini_closed",
+              code,
+              reason:
+                reason?.toString() ||
+                ""
+            })
+          );
+
+          browserSocket.close();
+        }
+      }
+    );
 
     browserSocket.on(
       "message",
-      raw => {
+      (data) => {
+        if (
+          !geminiReady
+        ) {
+          return;
+        }
 
-        let message;
+        if (
+          geminiSocket.readyState !==
+          WebSocket.OPEN
+        ) {
+          return;
+        }
 
         try {
-
-          message =
+          const message =
             JSON.parse(
-              raw.toString()
+              data.toString()
             );
 
-        } catch {
+          /*
+           * Clientdan faqat kerakli
+           * Live API xabarlarini o'tkazamiz.
+           */
+          const allowed =
+            new Set([
+              "realtimeInput",
+              "clientContent",
+              "toolResponse"
+            ]);
 
-          return;
+          const key =
+            Object.keys(
+              message
+            )[0];
 
-        }
-
-
-        if (
-          message.type ===
-          "config"
-        ) {
-
-          profile =
-            message.profile ||
-            {};
-
-          return;
-
-        }
-
-
-        if (
-          !geminiSocket ||
-          geminiSocket.readyState !==
-            WebSocket.OPEN
-        ) {
-
-          return;
-
-        }
-
-
-        if (
-          message.type ===
-          "text" &&
-          message.text?.trim()
-        ) {
+          if (
+            !allowed.has(key)
+          ) {
+            return;
+          }
 
           geminiSocket.send(
-
-            JSON.stringify({
-
-              clientContent: {
-
-                turns: [
-
-                  {
-
-                    role: "user",
-
-                    parts: [
-
-                      {
-
-                        text:
-                          message.text
-
-                      }
-
-                    ]
-
-                  }
-
-                ],
-
-                turnComplete:
-                  true
-
-              }
-
-            })
-
+            JSON.stringify(
+              message
+            )
           );
 
-          return;
-
-        }
-
-
-        if (
-          message.type ===
-          "audio" &&
-          message.data &&
-          ready
-        ) {
-
-          geminiSocket.send(
-
-            JSON.stringify({
-
-              realtimeInput: {
-
-                audio: {
-
-                  data:
-                    message.data,
-
-                  mimeType:
-                    "audio/pcm;rate=16000"
-
-                }
-
-              }
-
-            })
-
+        } catch (error) {
+          sendSocketError(
+            browserSocket,
+            "WebSocket xabari noto'g'ri JSON."
           );
-
-          return;
-
         }
-
-
-        if (
-          message.type ===
-          "audio_end" &&
-          ready
-        ) {
-
-          geminiSocket.send(
-
-            JSON.stringify({
-
-              realtimeInput: {
-
-                audioStreamEnd:
-                  true
-
-              }
-
-            })
-
-          );
-
-        }
-
       }
     );
-
 
     browserSocket.on(
       "close",
       () => {
-
         if (
-          geminiSocket &&
           geminiSocket.readyState ===
-            WebSocket.OPEN
+          WebSocket.OPEN ||
+          geminiSocket.readyState ===
+          WebSocket.CONNECTING
         ) {
-
           geminiSocket.close();
-
         }
-
       }
     );
 
+    browserSocket.on(
+      "error",
+      () => {
+        if (
+          geminiSocket.readyState ===
+          WebSocket.OPEN
+        ) {
+          geminiSocket.close();
+        }
+      }
+    );
   }
 );
 
+/* =========================================================
+   HTTP SERVER + WEBSOCKET UPGRADE
+========================================================= */
 
-/* =========================
+const server =
+  http.createServer(
+    app
+  );
+
+server.on(
+  "upgrade",
+  (request, socket, head) => {
+    try {
+      const url =
+        new URL(
+          request.url,
+          `http://${request.headers.host}`
+        );
+
+      if (
+        url.pathname !==
+        "/ws/live"
+      ) {
+        socket.destroy();
+
+        return;
+      }
+
+      liveWss.handleUpgrade(
+        request,
+        socket,
+        head,
+        (ws) => {
+          liveWss.emit(
+            "connection",
+            ws,
+            request
+          );
+        }
+      );
+
+    } catch {
+      socket.destroy();
+    }
+  }
+);
+
+/* =========================================================
    FRONTEND
-========================= */
+========================================================= */
 
 app.get(
   "/{*splat}",
   (req, res) => {
-
     res.sendFile(
       path.join(
         PUBLIC_DIR,
         "index.html"
       )
     );
-
   }
 );
 
-
-/* =========================
+/* =========================================================
    START
-========================= */
+========================================================= */
 
 server.listen(
   PORT,
   "0.0.0.0",
   () => {
-
     console.log(
       `IELTS USTOZ AI: http://localhost:${PORT}`
     );
 
+    console.log(
+      `Gemini Live model: ${LIVE_MODEL}`
+    );
+
+    console.log(
+      `Gemini Live key: ${
+        GEMINI_API_KEY
+          ? "YES"
+          : "NO"
+      }`
+    );
   }
 );
