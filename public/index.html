@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>IELTS USTOZ AI</title>
+
+  <meta
+    name="description"
+    content="IELTS uchun AI ustoz — Speaking, Listening, Reading va shaxsiy diagnostika."
+  >
+
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+<div class="background-glow glow-one"></div>
+<div class="background-glow glow-two"></div>
+
+<header class="topbar">
+
+  <div class="brand">
+
+    <div class="brand-logo">
+      AI
+    </div>
+
+    <div>
+      <div class="brand-name">
+        IELTS USTOZ
+      </div>
+
+      <div class="brand-sub">
+        REALIST • AI • SPEAKING • LISTENING
+      </div>
+    </div>
+
+  </div>
+
+  <div class="online">
+    <span></span>
+    Ustoz online
+  </div>
+
+</header>
+
+
+<main class="container">
+
+  <!-- HERO -->
+
+  <section class="hero">
+
+    <div class="hero-label">
+      SOKIN USTOZ. QATTIQ NATIJA.
+    </div>
+
+    <h1>
+      IELTSga tayyorlan.
+      <br>
+      <span>Bahona qoldirma.</span>
+    </h1>
+
+    <p>
+      AI ustoz seni tekshiradi, gapirtiradi,
+      eshittiradi, xatolaringni topadi
+      va keyingi mashqni beradi.
+    </p>
+
+    <div class="hero-buttons">
+
+      <button
+        class="button button-primary"
+        id="startBtn"
+      >
+        Diagnostikani boshlash
+        <b>→</b>
+      </button>
+
+      <button
+        class="button button-secondary"
+        id="demoBtn"
+      >
+        Ustozni sinash
+      </button>
+
+    </div>
+
+  </section>
+
+
+  <!-- APP -->
+
+  <section class="app">
+
+    <!-- SIDEBAR -->
+
+    <aside class="sidebar">
+
+      <div class="user-card">
+
+        <div class="user-avatar">
+          U
+        </div>
+
+        <div>
+
+          <strong>
+            O'quvchi
+          </strong>
+
+          <small id="sideLevel">
+            Daraja aniqlanmagan
+          </small>
+
+        </div>
+
+      </div>
+
+
+      <nav>
+
+        <button
+          class="nav-button active"
+          data-tab="home"
+        >
+          <span>⌂</span>
+          Bosh sahifa
+        </button>
+
+        <button
+          class="nav-button"
+          data-tab="speaking"
+        >
+          <span>◉</span>
+          Speaking
+        </button>
+
+        <button
+          class="nav-button"
+          data-tab="listening"
+        >
+          <span>◒</span>
+          Listening
+        </button>
+
+        <button
+          class="nav-button"
+          data-tab="reading"
+        >
+          <span>▤</span>
+          Reading
+        </button>
+
+        <button
+          class="nav-button"
+          data-tab="chat"
+        >
+          <span>✦</span>
+          AI Ustoz
+        </button>
+
+      </nav>
+
+
+      <div class="goal-card">
+
+        <div class="goal-title">
+          MAQSAD
+        </div>
+
+        <div
+          class="goal-number"
+          id="targetBand"
+        >
+          —
+        </div>
+
+        <div class="progress">
+          <span id="progressBar"></span>
+        </div>
+
+        <small id="progressText">
+          Diagnostikani tugating
+        </small>
+
+      </div>
+
+    </aside>
+
+
+    <!-- CONTENT -->
+
+    <section class="content">
+
+
+      <!-- HOME -->
+
+      <div
+        class="tab active"
+        id="home"
+      >
+
+        <div class="section-header">
+
+          <div>
+
+            <div class="small-label">
+              BOSHLANG'ICH TEKSHIRUV
+            </div>
+
+            <h2>
+              Ustoz seni tanisin.
+            </h2>
+
+          </div>
+
+          <div class="tag">
+            5 daqiqa
+          </div>
+
+        </div>
+
+
+        <div class="diagnostic-grid">
+
+
+          <article class="card diagnostic-card">
+
+            <div class="card-symbol">
+              🎯
+            </div>
+
+            <h3>
+              Nechi olmoqchisan?
+            </h3>
+
+            <p>
+              Rostini ayt.
+              Ustoz baribir bilib oladi.
+            </p>
+
+
+            <div class="target-buttons">
+
+              <button data-target="5.5">
+                5.5
+              </button>
+
+              <button data-target="6.0">
+                6.0
+              </button>
+
+              <button data-target="6.5">
+                6.5
+              </button>
+
+              <button data-target="7.0">
+                7.0
+              </button>
+
+              <button data-target="7.5">
+                7.5
+              </button>
+
+              <button data-target="8.0">
+                8.0+
+              </button>
+
+            </div>
+
+
+            <input
+              class="input"
+              id="deadline"
+              placeholder="Masalan: 3 oy ichida"
+            >
+
+
+            <button
+              class="button button-primary full"
+              id="diagnosticStart"
+            >
+              Tekshiruvni boshlash
+            </button>
+
+          </article>
+
+
+          <article class="card roast-card">
+
+            <div class="roast-quote">
+              “Kuniga 30 daqiqa o‘qib
+              9.0 olaman.”
+            </div>
+
+            <div class="roast-author">
+              — Ustoz
+            </div>
+
+            <div class="roast-message">
+              “Ha, albatta.
+              Men ham ertaga Marsga uchaman. 😌”
+            </div>
+
+            <small>
+              Hazil bir tomonda.
+              Reja — jiddiy.
+            </small>
+
+          </article>
+
+        </div>
+
+
+        <div class="stats">
+
+          <div class="stat">
+            <span>Overall</span>
+            <strong id="statBand">—</strong>
+          </div>
+
+          <div class="stat">
+            <span>Speaking</span>
+            <strong id="statSpeaking">—</strong>
+          </div>
+
+          <div class="stat">
+            <span>Listening</span>
+            <strong id="statListening">—</strong>
+          </div>
+
+          <div class="stat">
+            <span>Reading</span>
+            <strong id="statReading">—</strong>
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <!-- SPEAKING -->
+
+      <div
+        class="tab"
+        id="speaking"
+      >
+
+        <div class="section-header">
+
+          <div>
+
+            <div class="small-label">
+              SPEAKING LAB
+            </div>
+
+            <h2>
+              Gapir. Ustoz eshitadi.
+            </h2>
+
+          </div>
+
+          <div
+            class="tag red"
+            id="recordState"
+          >
+            Tayyor
+          </div>
+
+        </div>
+
+
+        <article class="card question-card">
+
+          <div class="small-label">
+            PART 1
+          </div>
+
+          <h3 id="speakingQuestion">
+            What do you usually do
+            in your free time?
+          </h3>
+
+          <p>
+            Inglizcha javob ber.
+            Mikrofonni bos, gapir,
+            yana bosib to'xtat.
+          </p>
+
+
+          <div class="recorder">
+
+            <button
+              class="record-button"
+              id="recordBtn"
+            >
+              <span></span>
+            </button>
+
+            <div>
+
+              <strong id="timer">
+                00:00
+              </strong>
+
+              <small id="recordHint">
+                Boshlash uchun mikrofonni bosing
+              </small>
+
+            </div>
+
+          </div>
+
+
+          <div
+            class="transcript"
+            id="transcript"
+          >
+            Javobingiz shu yerda chiqadi...
+          </div>
+
+
+          <button
+            class="button button-primary full"
+            id="gradeBtn"
+            disabled
+          >
+            Javobni tekshirish
+          </button>
+
+        </article>
+
+
+        <div
+          class="result hidden"
+          id="speakingResult"
+        ></div>
+
+      </div>
+
+
+      <!-- LISTENING -->
+
+      <div
+        class="tab"
+        id="listening"
+      >
+
+        <div class="section-header">
+
+          <div>
+
+            <div class="small-label">
+              LISTENING LAB
+            </div>
+
+            <h2>
+              Eshit. Tanla. Tekshir.
+            </h2>
+
+          </div>
+
+        </div>
+
+
+        <article class="card audio-card">
+
+          <button
+            class="audio-play"
+            id="listenPlay"
+          >
+            ▶
+          </button>
+
+          <div>
+
+            <div class="small-label">
+              AUDIO 01
+            </div>
+
+            <h3>
+              Daily routine at university
+            </h3>
+
+            <p>
+              Audio matnini eshitib,
+              savolga javob bering.
+            </p>
+
+          </div>
+
+        </article>
+
+
+        <article class="card quiz">
+
+          <h3>
+            What time does the student
+            usually arrive?
+          </h3>
+
+          <label>
+            <input
+              type="radio"
+              name="lq"
+              value="8:00"
+            >
+            8:00
+          </label>
+
+          <label>
+            <input
+              type="radio"
+              name="lq"
+              value="8:30"
+            >
+            8:30
+          </label>
+
+          <label>
+            <input
+              type="radio"
+              name="lq"
+              value="9:00"
+            >
+            9:00
+          </label>
+
+          <label>
+            <input
+              type="radio"
+              name="lq"
+              value="9:30"
+            >
+            9:30
+          </label>
+
+          <button
+            class="button button-primary"
+            id="checkListen"
+          >
+            Tekshirish
+          </button>
+
+          <div id="listenFeedback"></div>
+
+        </article>
+
+      </div>
+
+
+      <!-- READING -->
+
+      <div
+        class="tab"
+        id="reading"
+      >
+
+        <div class="section-header">
+
+          <div>
+
+            <div class="small-label">
+              READING LAB
+            </div>
+
+            <h2>
+              Matnni yeng.
+            </h2>
+
+          </div>
+
+        </div>
+
+
+        <article class="card reading-card">
+
+          <div class="small-label">
+            PASSAGE 01
+          </div>
+
+          <h3>
+            The psychology of habits
+          </h3>
+
+          <p>
+            Habits are repeated behaviors
+            that become easier through repetition.
+            Researchers suggest that a stable cue,
+            a simple routine and a meaningful reward
+            can make a behavior more automatic.
+            However, changing a habit often requires
+            patience because old patterns may remain
+            active even after a new routine begins.
+          </p>
+
+        </article>
+
+
+        <article class="card quiz">
+
+          <h3>
+            According to the passage,
+            what can make a behavior
+            more automatic?
+          </h3>
+
+          <label>
+            <input
+              type="radio"
+              name="rq"
+              value="a"
+            >
+            A longer routine
+          </label>
+
+          <label>
+            <input
+              type="radio"
+              name="rq"
+              value="b"
+            >
+            A stable cue, simple routine
+            and meaningful reward
+          </label>
+
+          <label>
+            <input
+              type="radio"
+              name="rq"
+              value="c"
+            >
+            Avoiding repetition
+          </label>
+
+          <button
+            class="button button-primary"
+            id="checkReading"
+          >
+            Tekshirish
+          </button>
+
+          <div id="readingFeedback"></div>
+
+        </article>
+
+      </div>
+
+
+      <!-- CHAT -->
+
+      <div
+        class="tab"
+        id="chat"
+      >
+
+        <div class="section-header">
+
+          <div>
+
+            <div class="small-label">
+              AI USTOZ
+            </div>
+
+            <h2>
+              Ustozga savol ber.
+            </h2>
+
+          </div>
+
+        </div>
+
+
+        <div
+          class="chat-box"
+          id="chatbox"
+        >
+
+          <div class="message teacher">
+
+            <b>
+              Ustoz AI
+            </b>
+
+            <p>
+              Kel, gaplashamiz.
+              IELTSdan nechi olmoqchisan?
+              Rostini ayt, men hali urishmayman. 😌
+            </p>
+
+          </div>
+
+        </div>
+
+
+        <div class="chat-input">
+
+          <input
+            id="chatInput"
+            placeholder="Masalan: Speakingimni qanday 7.0 qilaman?"
+          >
+
+          <button id="sendChat">
+            ➤
+          </button>
+
+        </div>
+
+      </div>
+
+    </section>
+
+  </section>
+
+</main>
+
+
+<!-- DIAGNOSTIC MODAL -->
+
+<div
+  class="modal hidden"
+  id="diagnosticModal"
+>
+
+  <div class="modal-card">
+
+    <button
+      class="close"
+      id="closeModal"
+    >
+      ×
+    </button>
+
+    <div class="small-label">
+      DIAGNOSTIKA
+    </div>
+
+    <div id="diagStep"></div>
+
+  </div>
+
+</div>
+
+
+<div id="toast"></div>
+
+
+<script src="/app.js"></script>
+
+</body>
+</html>
