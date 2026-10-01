@@ -2,10 +2,6 @@ import express from "express";
 import multer from "multer";
 import fs from "fs/promises";
 import path from "path";
-import http from "http";
-import WebSocket, {
-  WebSocketServer
-} from "ws";
 
 const app = express();
 
@@ -13,19 +9,23 @@ const PORT = Number(
   process.env.PORT || 10000
 );
 
-/* =========================
-   API KEYS
-========================= */
+const PUBLIC_DIR = path.join(
+  process.cwd(),
+  "public"
+);
+
+const UPLOAD_DIR = path.join(
+  process.cwd(),
+  ".uploads"
+);
+
+
+// =====================================================
+// OPENAI
+// =====================================================
 
 const OPENAI_API_KEY =
   process.env.OPENAI_API_KEY || "";
-
-const GEMINI_API_KEY =
-  process.env.GEMINI_API_KEY || "";
-
-/* =========================
-   MODELS
-========================= */
 
 const AI_MODEL =
   process.env.AI_MODEL ||
@@ -39,6 +39,14 @@ const TTS_MODEL =
   process.env.TTS_MODEL ||
   "gpt-4o-mini-tts";
 
+
+// =====================================================
+// GEMINI LIVE
+// =====================================================
+
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY || "";
+
 const LIVE_MODEL =
   process.env.LIVE_MODEL ||
   "gemini-3.8-live";
@@ -47,46 +55,35 @@ const LIVE_VOICE =
   process.env.LIVE_VOICE ||
   "Kore";
 
-/* =========================
-   PATHS
-========================= */
 
-const PUBLIC_DIR =
-  path.join(
-    process.cwd(),
-    "public"
-  );
-
-const uploadDir =
-  path.join(
-    process.cwd(),
-    ".uploads"
-  );
+// =====================================================
+// UPLOAD
+// =====================================================
 
 await fs.mkdir(
-  uploadDir,
+  UPLOAD_DIR,
   {
     recursive: true
   }
 );
 
-/* =========================
-   UPLOAD
-========================= */
+const upload = multer({
+  dest: UPLOAD_DIR,
 
-const upload =
-  multer({
-    dest: uploadDir,
+  limits: {
+    fileSize:
+      15 * 1024 * 1024
+  }
+});
 
-    limits: {
-      fileSize:
-        15 * 1024 * 1024
-    }
-  });
 
-/* =========================
-   MIDDLEWARE
-========================= */
+// =====================================================
+// MIDDLEWARE
+// =====================================================
+
+app.disable(
+  "x-powered-by"
+);
 
 app.use(
   express.json({
@@ -96,47 +93,31 @@ app.use(
 
 app.use(
   express.static(
-    PUBLIC_DIR
+    PUBLIC_DIR,
+    {
+      index: false
+    }
   )
 );
 
-/* =========================
-   OPENAI KEY CHECK
-========================= */
 
-function requireOpenAIKey(res) {
-  if (!OPENAI_API_KEY) {
-    res.status(500).json({
-      error:
-        "OPENAI_API_KEY sozlanmagan."
-    });
+// =====================================================
+// OPENAI HELPERS
+// =====================================================
 
-    return false;
+function requireOpenAI(res) {
+  if (OPENAI_API_KEY) {
+    return true;
   }
 
-  return true;
+  res.status(503).json({
+    error:
+      "OPENAI_API_KEY sozlanmagan yoki OpenAI billing/credit mavjud emas."
+  });
+
+  return false;
 }
 
-/* =========================
-   GEMINI KEY CHECK
-========================= */
-
-function requireGeminiKey(res) {
-  if (!GEMINI_API_KEY) {
-    res.status(500).json({
-      error:
-        "GEMINI_API_KEY sozlanmagan."
-    });
-
-    return false;
-  }
-
-  return true;
-}
-
-/* =========================
-   OPENAI REQUEST
-========================= */
 
 async function openaiRequest(
   endpoint,
@@ -160,17 +141,17 @@ async function openaiRequest(
       }
     );
 
-  const text =
+  const raw =
     await response.text();
 
   let data;
 
   try {
     data =
-      JSON.parse(text);
+      JSON.parse(raw);
   } catch {
     data = {
-      raw: text
+      raw
     };
   }
 
@@ -185,9 +166,10 @@ async function openaiRequest(
   return data;
 }
 
-/* =========================
-   TEACHER PROMPT
-========================= */
+
+// =====================================================
+// TEACHER PROMPT
+// =====================================================
 
 function teacherPrompt(
   profile = {}
@@ -200,12 +182,11 @@ Uslubing:
 
 - sokin
 - samimiy
-- kulgili
 - aqlli
-- realistik
+- yengil kulgili
 - motivatsion
-
-Ba'zan yengil hazil qil.
+- tushunarli
+- amaliy
 
 O'quvchini kamsitma.
 Haqorat qilma.
@@ -229,13 +210,90 @@ aniq keyingi qadam ber.
 IELTS ballarini rasmiy natija
 sifatida ko'rsatma.
 
-Taxminiy baho ekanini ayt.
+Agar band aytsang,
+uni taxminiy baho ekanini tushuntir.
 `.trim();
 }
 
-/* =========================================================
-   HEALTH
-========================================================= */
+
+// =====================================================
+// JSON SCHEMA
+// =====================================================
+
+function jsonSchemaResult(
+  name,
+  schema
+) {
+  return {
+    text: {
+      format: {
+        type: "json_schema",
+        name,
+        strict: true,
+        schema
+      }
+    }
+  };
+}
+
+
+const gradeSchema = {
+  type: "object",
+
+  additionalProperties: false,
+
+  properties: {
+    message: {
+      type: "string"
+    },
+
+    band: {
+      type: "number"
+    },
+
+    strengths: {
+      type: "array",
+
+      items: {
+        type: "string"
+      }
+    },
+
+    weaknesses: {
+      type: "array",
+
+      items: {
+        type: "string"
+      }
+    },
+
+    next_steps: {
+      type: "array",
+
+      items: {
+        type: "string"
+      }
+    },
+
+    corrected_answer: {
+      type: "string"
+    }
+  },
+
+  required: [
+    "message",
+    "band",
+    "strengths",
+    "weaknesses",
+    "next_steps",
+    "corrected_answer"
+  ]
+};
+
+
+// =====================================================
+// HEALTH
+// =====================================================
 
 app.get(
   "/api/health",
@@ -244,25 +302,26 @@ app.get(
       ok: true,
       service:
         "IELTS USTOZ AI",
-      geminiLive:
-        Boolean(GEMINI_API_KEY),
+
+      model:
+        AI_MODEL,
+
       liveModel:
         LIVE_MODEL
     });
   }
 );
 
-/* =========================================================
-   CHAT
-========================================================= */
+
+// =====================================================
+// CHAT
+// =====================================================
 
 app.post(
   "/api/chat",
   async (req, res) => {
     try {
-      if (
-        !requireOpenAIKey(res)
-      ) {
+      if (!requireOpenAI(res)) {
         return;
       }
 
@@ -279,10 +338,14 @@ app.post(
         });
       }
 
+      const safeHistory =
+        Array.isArray(history)
+          ? history.slice(-12)
+          : [];
+
       const input = [
-        ...history
-          .slice(-12)
-          .map(item => ({
+        ...safeHistory.map(
+          item => ({
             role:
               item.role ===
               "assistant"
@@ -292,7 +355,10 @@ app.post(
             content: [
               {
                 type:
-                  "input_text",
+                  item.role ===
+                  "assistant"
+                    ? "output_text"
+                    : "input_text",
 
                 text:
                   String(
@@ -301,7 +367,8 @@ app.post(
                   )
               }
             ]
-          })),
+          })
+        ),
 
         {
           role: "user",
@@ -311,7 +378,8 @@ app.post(
               type:
                 "input_text",
 
-              text: message
+              text:
+                message.trim()
             }
           ]
         }
@@ -322,25 +390,28 @@ app.post(
           "/v1/responses",
 
           JSON.stringify({
-            model: AI_MODEL,
+            model:
+              AI_MODEL,
 
             instructions:
-              teacherPrompt(
+              `${teacherPrompt(
                 profile
-              ) +
-              `
+              )}
 
-O'quvchi bilan oddiy suhbat qil.
+O'quvchi bilan oddiy
+suhbat qil.
 
-IELTS bo'yicha tushuntir.
+IELTS bo'yicha
+tushuntir.
 
 Xatolarini ko'rsat.
 
-Keraksiz uzun javob bermasdan,
-amaliy maslahat ber.
+Keraksiz uzun javob
+bermasdan amaliy
+maslahat ber.
 
-Agar savol noaniq bo'lsa,
-bitta aniqlashtiruvchi savol ber.
+O'quvchining darajasiga
+mos misollar ber.
 `,
 
             input,
@@ -362,6 +433,11 @@ bitta aniqlashtiruvchi savol ber.
       });
 
     } catch (error) {
+      console.error(
+        "CHAT ERROR:",
+        error
+      );
+
       res.status(500).json({
         error:
           error.message
@@ -370,17 +446,16 @@ bitta aniqlashtiruvchi savol ber.
   }
 );
 
-/* =========================================================
-   DIAGNOSTIC
-========================================================= */
+
+// =====================================================
+// DIAGNOSTIC
+// =====================================================
 
 app.post(
   "/api/diagnostic",
   async (req, res) => {
     try {
-      if (
-        !requireOpenAIKey(res)
-      ) {
+      if (!requireOpenAI(res)) {
         return;
       }
 
@@ -388,34 +463,6 @@ app.post(
         profile = {},
         answers = []
       } = req.body || {};
-
-      const prompt =
-        teacherPrompt(
-          profile
-        ) +
-        `
-
-Sen IELTS diagnostika
-o'qituvchisisan.
-
-O'quvchi javoblarini tahlil qil.
-
-Taxminiy IELTS band ber.
-
-Bu rasmiy IELTS natijasi emas.
-
-Quyidagilarni aniqlashga harakat qil:
-
-- kuchli tomonlari
-- zaif tomonlari
-- taxminiy daraja
-- keyingi mashqlar
-
-Javob o'zbek tilida bo'lsin.
-
-Ustoz kabi sokin va kulgili
-uslubdan foydalan.
-`;
 
       const result =
         await openaiRequest(
@@ -426,11 +473,39 @@ uslubdan foydalan.
               AI_MODEL,
 
             instructions:
-              prompt,
+              `${teacherPrompt(
+                profile
+              )}
+
+Sen IELTS diagnostika
+o'qituvchisisan.
+
+O'quvchi javoblarini
+tahlil qil.
+
+Taxminiy IELTS band ber.
+
+Bu rasmiy IELTS natijasi emas.
+
+Quyidagilarni aniqlagin:
+
+- kuchli tomonlari
+- zaif tomonlari
+- taxminiy daraja
+- keyingi mashqlar
+
+Javob o'zbek tilida
+bo'lsin.
+
+Ustoz kabi sokin,
+samimiy va foydali
+uslubdan foydalan.
+`,
 
             input: [
               {
-                role: "user",
+                role:
+                  "user",
 
                 content: [
                   {
@@ -447,81 +522,13 @@ uslubdan foydalan.
               }
             ],
 
-            text: {
-              format: {
-                type:
-                  "json_schema",
+            ...jsonSchemaResult(
+              "diagnostic_result",
+              gradeSchema
+            ),
 
-                name:
-                  "diagnostic_result",
-
-                strict: true,
-
-                schema: {
-                  type:
-                    "object",
-
-                  additionalProperties:
-                    false,
-
-                  properties: {
-                    message: {
-                      type:
-                        "string"
-                    },
-
-                    band: {
-                      type:
-                        "number"
-                    },
-
-                    strengths: {
-                      type:
-                        "array",
-
-                      items: {
-                        type:
-                          "string"
-                      }
-                    },
-
-                    weaknesses: {
-                      type:
-                        "array",
-
-                      items: {
-                        type:
-                          "string"
-                      }
-                    },
-
-                    next_steps: {
-                      type:
-                        "array",
-
-                      items: {
-                        type:
-                          "string"
-                      }
-                    },
-
-                    corrected_answer: {
-                      type:
-                        "string"
-                    }
-                  },
-
-                  required: [
-                    "message",
-                    "band",
-                    "strengths",
-                    "weaknesses",
-                    "next_steps",
-                    "corrected_answer"
-                  ]
-                }
-              }
-            }
+            max_output_tokens:
+              1200
           }),
 
           {
@@ -530,15 +537,20 @@ uslubdan foydalan.
           }
         );
 
-      const text =
-        result.output_text ||
-        "";
+      const parsed =
+        JSON.parse(
+          result.output_text ||
+          "{}"
+        );
 
-      res.json(
-        JSON.parse(text)
-      );
+      res.json(parsed);
 
     } catch (error) {
+      console.error(
+        "DIAGNOSTIC ERROR:",
+        error
+      );
+
       res.status(500).json({
         error:
           error.message
@@ -547,17 +559,16 @@ uslubdan foydalan.
   }
 );
 
-/* =========================================================
-   SPEAKING GRADE
-========================================================= */
+
+// =====================================================
+// SPEAKING GRADE
+// =====================================================
 
 app.post(
   "/api/speaking/grade",
   async (req, res) => {
     try {
-      if (
-        !requireOpenAIKey(res)
-      ) {
+      if (!requireOpenAI(res)) {
         return;
       }
 
@@ -577,11 +588,18 @@ app.post(
         });
       }
 
-      const instructions =
-        teacherPrompt(
-          profile
-        ) +
-        `
+      const result =
+        await openaiRequest(
+          "/v1/responses",
+
+          JSON.stringify({
+            model:
+              AI_MODEL,
+
+            instructions:
+              `${teacherPrompt(
+                profile
+              )}
 
 Sen IELTS Speaking
 o'qituvchisisan.
@@ -594,36 +612,30 @@ Bahola:
 
 1. Fluency and Coherence
 2. Lexical Resource
-3. Grammar
+3. Grammatical Range and Accuracy
 4. Pronunciation
 
-Lekin faqat transcript mavjud bo'lsa,
-pronunciationni aniq baholay
-olmasligingni ayt.
+Faqat transcript berilgan
+bo'lsa pronunciationni
+aniq baholab bo'lmasligini
+ochiq ayt.
 
 Taxminiy band:
+
 0 dan 9 gacha.
 
 0.5 qadam bilan bahola.
 
-O'quvchiga o'zbekcha
-sokin va kulgili tarzda
-feedback ber.
-`;
+Bu rasmiy IELTS natijasi emas.
 
-      const result =
-        await openaiRequest(
-          "/v1/responses",
-
-          JSON.stringify({
-            model:
-              AI_MODEL,
-
-            instructions,
+Feedback o'zbekcha,
+sokin va foydali bo'lsin.
+`,
 
             input: [
               {
-                role: "user",
+                role:
+                  "user",
 
                 content: [
                   {
@@ -640,81 +652,13 @@ feedback ber.
               }
             ],
 
-            text: {
-              format: {
-                type:
-                  "json_schema",
+            ...jsonSchemaResult(
+              "speaking_grade",
+              gradeSchema
+            ),
 
-                name:
-                  "speaking_grade",
-
-                strict: true,
-
-                schema: {
-                  type:
-                    "object",
-
-                  additionalProperties:
-                    false,
-
-                  properties: {
-                    message: {
-                      type:
-                        "string"
-                    },
-
-                    band: {
-                      type:
-                        "number"
-                    },
-
-                    strengths: {
-                      type:
-                        "array",
-
-                      items: {
-                        type:
-                          "string"
-                      }
-                    },
-
-                    weaknesses: {
-                      type:
-                        "array",
-
-                      items: {
-                        type:
-                          "string"
-                      }
-                    },
-
-                    next_steps: {
-                      type:
-                        "array",
-
-                      items: {
-                        type:
-                          "string"
-                      }
-                    },
-
-                    corrected_answer: {
-                      type:
-                        "string"
-                    }
-                  },
-
-                  required: [
-                    "message",
-                    "band",
-                    "strengths",
-                    "weaknesses",
-                    "next_steps",
-                    "corrected_answer"
-                  ]
-                }
-              }
-            }
+            max_output_tokens:
+              1200
           }),
 
           {
@@ -723,13 +667,20 @@ feedback ber.
           }
         );
 
-      res.json(
+      const parsed =
         JSON.parse(
-          result.output_text
-        )
-      );
+          result.output_text ||
+          "{}"
+        );
+
+      res.json(parsed);
 
     } catch (error) {
+      console.error(
+        "SPEAKING GRADE ERROR:",
+        error
+      );
+
       res.status(500).json({
         error:
           error.message
@@ -738,21 +689,21 @@ feedback ber.
   }
 );
 
-/* =========================================================
-   AUDIO TRANSCRIPTION
-========================================================= */
+
+// =====================================================
+// TRANSCRIBE
+// =====================================================
 
 app.post(
   "/api/transcribe",
+
   upload.single("audio"),
 
   async (req, res) => {
     let filePath;
 
     try {
-      if (
-        !requireOpenAIKey(res)
-      ) {
+      if (!requireOpenAI(res)) {
         return;
       }
 
@@ -813,6 +764,11 @@ app.post(
       });
 
     } catch (error) {
+      console.error(
+        "TRANSCRIBE ERROR:",
+        error
+      );
+
       res.status(500).json({
         error:
           error.message
@@ -833,17 +789,17 @@ app.post(
   }
 );
 
-/* =========================================================
-   TEXT TO SPEECH
-========================================================= */
+
+// =====================================================
+// TTS
+// =====================================================
 
 app.post(
   "/api/tts",
+
   async (req, res) => {
     try {
-      if (
-        !requireOpenAIKey(res)
-      ) {
+      if (!requireOpenAI(res)) {
         return;
       }
 
@@ -863,7 +819,8 @@ app.post(
         await fetch(
           "https://api.openai.com/v1/audio/speech",
           {
-            method: "POST",
+            method:
+              "POST",
 
             headers: {
               Authorization:
@@ -881,10 +838,12 @@ app.post(
                 voice,
 
                 input:
-                  text.slice(
-                    0,
-                    4000
-                  ),
+                  text
+                    .trim()
+                    .slice(
+                      0,
+                      4000
+                    ),
 
                 response_format:
                   "mp3"
@@ -908,9 +867,19 @@ app.post(
         "audio/mpeg"
       );
 
+      res.setHeader(
+        "Cache-Control",
+        "no-store"
+      );
+
       res.send(buffer);
 
     } catch (error) {
+      console.error(
+        "TTS ERROR:",
+        error
+      );
+
       res.status(500).json({
         error:
           error.message
@@ -919,390 +888,219 @@ app.post(
   }
 );
 
-/* =========================================================
-   GEMINI LIVE WEBSOCKET
-========================================================= */
 
-const liveWss =
-  new WebSocketServer({
-    noServer: true
-  });
+// =====================================================
+// GEMINI LIVE EPHEMERAL TOKEN
+// =====================================================
 
-function sendSocketError(
-  socket,
-  message
-) {
-  if (
-    socket.readyState ===
-    WebSocket.OPEN
-  ) {
-    socket.send(
-      JSON.stringify({
-        type: "error",
-        error: message
-      })
-    );
-  }
-}
+app.post(
+  "/api/live-token",
 
-liveWss.on(
-  "connection",
-  (browserSocket) => {
-    if (!GEMINI_API_KEY) {
-      sendSocketError(
-        browserSocket,
-        "GEMINI_API_KEY Render Environment Variables ichida sozlanmagan."
-      );
+  async (req, res) => {
+    try {
+      if (!GEMINI_API_KEY) {
+        return res.status(503).json({
+          error:
+            "GEMINI_API_KEY Render Environment Variables ichida sozlanmagan."
+        });
+      }
 
-      browserSocket.close();
+      const now =
+        Date.now();
 
-      return;
-    }
+      const expireTime =
+        new Date(
+          now +
+          30 * 60 * 1000
+        ).toISOString();
 
-    const geminiUrl =
-      "wss://generativelanguage.googleapis.com/ws/" +
-      "google.ai.generativelanguage.v1beta." +
-      "GenerativeService.BidiGenerateContent" +
-      `?key=${encodeURIComponent(
-        GEMINI_API_KEY
-      )}`;
+      const newSessionExpireTime =
+        new Date(
+          now +
+          60 * 1000
+        ).toISOString();
 
-    const geminiSocket =
-      new WebSocket(
-        geminiUrl
-      );
+      const response =
+        await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/auth_tokens",
+          {
+            method:
+              "POST",
 
-    let geminiReady =
-      false;
+            headers: {
+              "x-goog-api-key":
+                GEMINI_API_KEY,
 
-    geminiSocket.on(
-      "open",
-      () => {
-        const setupMessage = {
-          setup: {
-            model:
-              `models/${LIVE_MODEL}`,
-
-            generationConfig: {
-              responseModalities: [
-                "AUDIO"
-              ],
-
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName:
-                      LIVE_VOICE
-                  }
-                }
-              },
-
-              inputAudioTranscription: {},
-
-              outputAudioTranscription: {}
+              "Content-Type":
+                "application/json"
             },
 
-            systemInstruction: {
-              parts: [
-                {
-                  text: `
-Sen IELTS USTOZ AI'san.
+            body:
+              JSON.stringify({
+                uses: 1,
 
-Sen real-time IELTS Speaking
-ustozisan.
+                expireTime,
 
-O'quvchi bilan huddi telefonda
-gaplashayotgandek suhbat qil.
-
-Javoblaring:
-- sokin
-- tabiiy
-- qisqa
-- samimiy
-- aniq
-- motivatsion
-
-O'quvchi gapirayotgan paytda
-uni bo'lma.
-
-U gapini tugatgach javob ber.
-
-Keraksiz uzun monolog qilma.
-
-IELTS Speaking mashqi qil.
-
-Savol ber.
-
-O'quvchining javobini tingla.
-
-Kerak bo'lsa inglizcha xatosini
-muloyim tuzat.
-
-O'quvchi o'zbekcha gapirsa,
-o'zbekcha tushuntir.
-
-IELTS savollarini inglizcha
-berishing mumkin.
-
-Oddiy suhbatni tabiiy davom ettir.
-
-Ovoz ohanging sokin va
-ustozona bo'lsin.
-`.trim()
-                }
-              ]
-            }
+                newSessionExpireTime
+              })
           }
+        );
+
+      const raw =
+        await response.text();
+
+      let data;
+
+      try {
+        data =
+          JSON.parse(raw);
+      } catch {
+        data = {
+          raw
         };
-
-        geminiSocket.send(
-          JSON.stringify(
-            setupMessage
-          )
-        );
-
-        geminiReady = true;
-
-        if (
-          browserSocket.readyState ===
-          WebSocket.OPEN
-        ) {
-          browserSocket.send(
-            JSON.stringify({
-              type:
-                "connected",
-              model:
-                LIVE_MODEL
-            })
-          );
-        }
       }
-    );
 
-    geminiSocket.on(
-      "message",
-      (data) => {
-        if (
-          browserSocket.readyState ===
-          WebSocket.OPEN
-        ) {
-          browserSocket.send(
-            data.toString()
-          );
-        }
-      }
-    );
-
-    geminiSocket.on(
-      "error",
-      (error) => {
-        console.error(
-          "Gemini Live error:",
-          error.message
-        );
-
-        sendSocketError(
-          browserSocket,
-          error.message
+      if (!response.ok) {
+        throw new Error(
+          data?.error?.message ||
+          data?.raw ||
+          `Gemini token error ${response.status}`
         );
       }
-    );
 
-    geminiSocket.on(
-      "close",
-      (code, reason) => {
-        if (
-          browserSocket.readyState ===
-          WebSocket.OPEN
-        ) {
-          browserSocket.send(
-            JSON.stringify({
-              type:
-                "gemini_closed",
-              code,
-              reason:
-                reason?.toString() ||
-                ""
-            })
-          );
-
-          browserSocket.close();
-        }
-      }
-    );
-
-    browserSocket.on(
-      "message",
-      (data) => {
-        if (
-          !geminiReady
-        ) {
-          return;
-        }
-
-        if (
-          geminiSocket.readyState !==
-          WebSocket.OPEN
-        ) {
-          return;
-        }
-
-        try {
-          const message =
-            JSON.parse(
-              data.toString()
-            );
-
-          /*
-           * Clientdan faqat kerakli
-           * Live API xabarlarini o'tkazamiz.
-           */
-          const allowed =
-            new Set([
-              "realtimeInput",
-              "clientContent",
-              "toolResponse"
-            ]);
-
-          const key =
-            Object.keys(
-              message
-            )[0];
-
-          if (
-            !allowed.has(key)
-          ) {
-            return;
-          }
-
-          geminiSocket.send(
-            JSON.stringify(
-              message
-            )
-          );
-
-        } catch (error) {
-          sendSocketError(
-            browserSocket,
-            "WebSocket xabari noto'g'ri JSON."
-          );
-        }
-      }
-    );
-
-    browserSocket.on(
-      "close",
-      () => {
-        if (
-          geminiSocket.readyState ===
-          WebSocket.OPEN ||
-          geminiSocket.readyState ===
-          WebSocket.CONNECTING
-        ) {
-          geminiSocket.close();
-        }
-      }
-    );
-
-    browserSocket.on(
-      "error",
-      () => {
-        if (
-          geminiSocket.readyState ===
-          WebSocket.OPEN
-        ) {
-          geminiSocket.close();
-        }
-      }
-    );
-  }
-);
-
-/* =========================================================
-   HTTP SERVER + WEBSOCKET UPGRADE
-========================================================= */
-
-const server =
-  http.createServer(
-    app
-  );
-
-server.on(
-  "upgrade",
-  (request, socket, head) => {
-    try {
-      const url =
-        new URL(
-          request.url,
-          `http://${request.headers.host}`
+      if (!data?.name) {
+        throw new Error(
+          "Gemini ephemeral token qaytmadi."
         );
-
-      if (
-        url.pathname !==
-        "/ws/live"
-      ) {
-        socket.destroy();
-
-        return;
       }
 
-      liveWss.handleUpgrade(
-        request,
-        socket,
-        head,
-        (ws) => {
-          liveWss.emit(
-            "connection",
-            ws,
-            request
-          );
-        }
+      res.json({
+        token:
+          data.name,
+
+        model:
+          LIVE_MODEL,
+
+        voice:
+          LIVE_VOICE,
+
+        expiresAt:
+          expireTime
+      });
+
+    } catch (error) {
+      console.error(
+        "GEMINI LIVE TOKEN ERROR:",
+        error
       );
 
-    } catch {
-      socket.destroy();
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
-/* =========================================================
-   FRONTEND
-========================================================= */
+
+// =====================================================
+// FRONTEND
+// =====================================================
+//
+// Express 5 da "*" ishlatilmaydi.
+// Shuning uchun "/{*splat}" ishlatiladi.
+//
+// live.js mavjud index.html ichiga
+// avtomatik qo'shiladi.
+//
 
 app.get(
   "/{*splat}",
-  (req, res) => {
-    res.sendFile(
-      path.join(
-        PUBLIC_DIR,
-        "index.html"
-      )
-    );
+
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const indexPath =
+        path.join(
+          PUBLIC_DIR,
+          "index.html"
+        );
+
+      let html =
+        await fs.readFile(
+          indexPath,
+          "utf8"
+        );
+
+      if (
+        !html.includes(
+          'src="/live.js"'
+        )
+      ) {
+        html =
+          html.replace(
+            "</body>",
+            '  <script src="/live.js"></script>\n</body>'
+          );
+      }
+
+      res
+        .type("html")
+        .send(html);
+
+    } catch (error) {
+      next(error);
+    }
   }
 );
 
-/* =========================================================
-   START
-========================================================= */
 
-server.listen(
+// =====================================================
+// ERROR HANDLER
+// =====================================================
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      "SERVER ERROR:",
+      error
+    );
+
+    if (
+      res.headersSent
+    ) {
+      return next(error);
+    }
+
+    res.status(500).json({
+      error:
+        "Server xatosi",
+
+      detail:
+        error.message
+    });
+  }
+);
+
+
+// =====================================================
+// START
+// =====================================================
+
+app.listen(
   PORT,
   "0.0.0.0",
   () => {
     console.log(
-      `IELTS USTOZ AI: http://localhost:${PORT}`
-    );
-
-    console.log(
-      `Gemini Live model: ${LIVE_MODEL}`
-    );
-
-    console.log(
-      `Gemini Live key: ${
-        GEMINI_API_KEY
-          ? "YES"
-          : "NO"
-      }`
+      `IELTS USTOZ AI server running on port ${PORT}`
     );
   }
 );
