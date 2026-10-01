@@ -17,34 +17,44 @@ const TRANSCRIBE_MODEL =
 const TTS_MODEL =
   process.env.TTS_MODEL || "gpt-4o-mini-tts";
 
-const uploadDir = path.join(process.cwd(), ".uploads");
+const PUBLIC_DIR = path.join(process.cwd(), "public");
+const UPLOAD_DIR = path.join(process.cwd(), ".uploads");
 
-await fs.mkdir(uploadDir, {
+await fs.mkdir(UPLOAD_DIR, {
   recursive: true
 });
 
 const upload = multer({
-  dest: uploadDir,
+  dest: UPLOAD_DIR,
   limits: {
     fileSize: 15 * 1024 * 1024
   }
 });
 
-app.use(express.json({
-  limit: "1mb"
-}));
+/* =========================
+   MIDDLEWARE
+========================= */
+
+app.disable("x-powered-by");
 
 app.use(
-  express.static(
-    path.join(process.cwd(), "public")
-  )
+  express.json({
+    limit: "1mb"
+  })
 );
+
+app.use(
+  express.static(PUBLIC_DIR)
+);
+
+/* =========================
+   HELPERS
+========================= */
 
 function requireKey(res) {
   if (!OPENAI_API_KEY) {
     res.status(500).json({
-      error:
-        "OPENAI_API_KEY sozlanmagan."
+      error: "OPENAI_API_KEY sozlanmagan."
     });
 
     return false;
@@ -74,8 +84,7 @@ async function openaiRequest(
     }
   );
 
-  const text =
-    await response.text();
+  const text = await response.text();
 
   let data;
 
@@ -107,12 +116,14 @@ Uslubing:
 
 - sokin
 - samimiy
-- kulgili
 - aqlli
-- realistik
+- yengil kulgili
 - motivatsion
+- tushunarli
+- amaliy
 
 Ba'zan yengil hazil qil.
+
 O'quvchini kamsitma.
 Haqorat qilma.
 Qo'rqitma.
@@ -134,45 +145,72 @@ aniq keyingi qadam ber.
 
 IELTS ballarini rasmiy natija
 sifatida ko'rsatma.
-Taxminiy baho ekanini ayt.
+
+Agar band aytsang,
+uni taxminiy baho ekanini tushuntir.
 `.trim();
+}
+
+function jsonSchemaResult(
+  name,
+  schema
+) {
+  return {
+    text: {
+      format: {
+        type: "json_schema",
+        name,
+        strict: true,
+        schema
+      }
+    }
+  };
 }
 
 /* =========================
    HEALTH
 ========================= */
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "IELTS USTOZ AI"
-  });
-});
+app.get(
+  "/api/health",
+  (req, res) => {
+    res.json({
+      ok: true,
+      service: "IELTS USTOZ AI",
+      model: AI_MODEL
+    });
+  }
+);
 
 /* =========================
    CHAT
 ========================= */
 
-app.post("/api/chat", async (req, res) => {
-  try {
-    if (!requireKey(res)) return;
+app.post(
+  "/api/chat",
+  async (req, res) => {
+    try {
+      if (!requireKey(res)) return;
 
-    const {
-      message,
-      history = [],
-      profile = {}
-    } = req.body || {};
+      const {
+        message,
+        history = [],
+        profile = {}
+      } = req.body || {};
 
-    if (!message?.trim()) {
-      return res.status(400).json({
-        error: "message kerak"
-      });
-    }
+      if (!message?.trim()) {
+        return res.status(400).json({
+          error: "message kerak"
+        });
+      }
 
-    const input = [
-      ...history
-        .slice(-12)
-        .map(item => ({
+      const safeHistory =
+        Array.isArray(history)
+          ? history.slice(-12)
+          : [];
+
+      const input = [
+        ...safeHistory.map(item => ({
           role:
             item.role === "assistant"
               ? "assistant"
@@ -180,7 +218,11 @@ app.post("/api/chat", async (req, res) => {
 
           content: [
             {
-              type: "input_text",
+              type:
+                item.role === "assistant"
+                  ? "output_text"
+                  : "input_text",
+
               text: String(
                 item.content || ""
               )
@@ -188,29 +230,29 @@ app.post("/api/chat", async (req, res) => {
           ]
         })),
 
-      {
-        role: "user",
+        {
+          role: "user",
 
-        content: [
-          {
-            type: "input_text",
-            text: message
-          }
-        ]
-      }
-    ];
+          content: [
+            {
+              type: "input_text",
+              text: message.trim()
+            }
+          ]
+        }
+      ];
 
-    const result =
-      await openaiRequest(
-        "/v1/responses",
+      const result =
+        await openaiRequest(
+          "/v1/responses",
 
-        JSON.stringify({
-          model: AI_MODEL,
+          JSON.stringify({
+            model: AI_MODEL,
 
-          instructions:
-            teacherPrompt(profile) +
+            instructions:
+              teacherPrompt(profile) +
 
-            `
+              `
 
 O'quvchi bilan oddiy suhbat qil.
 
@@ -221,32 +263,41 @@ Xatolarini ko'rsat.
 Keraksiz uzun javob bermasdan,
 amaliy maslahat ber.
 
+O'quvchining darajasiga mos
+misollar ber.
+
 Agar savol noaniq bo'lsa,
 bitta aniqlashtiruvchi savol ber.
 `,
 
-          input,
+            input,
 
-          max_output_tokens: 900
-        }),
+            max_output_tokens: 900
+          }),
 
-        {
-          "Content-Type":
-            "application/json"
-        }
+          {
+            "Content-Type":
+              "application/json"
+          }
+        );
+
+      res.json({
+        reply:
+          result.output_text || ""
+      });
+
+    } catch (error) {
+      console.error(
+        "CHAT ERROR:",
+        error
       );
 
-    res.json({
-      reply:
-        result.output_text || ""
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+      res.status(500).json({
+        error: error.message
+      });
+    }
   }
-});
+);
 
 /* =========================
    DIAGNOSTIC
@@ -263,7 +314,7 @@ app.post(
         answers = []
       } = req.body || {};
 
-      const prompt =
+      const instructions =
         teacherPrompt(profile) +
 
         `
@@ -286,9 +337,63 @@ Quyidagilarni aniqlashga harakat qil:
 
 Javob o'zbek tilida bo'lsin.
 
-Ustoz kabi sokin va kulgili
+Ustoz kabi sokin,
+samimiy va yengil kulgili
 uslubdan foydalan.
 `;
+
+      const schema = {
+        type: "object",
+
+        additionalProperties: false,
+
+        properties: {
+          message: {
+            type: "string"
+          },
+
+          band: {
+            type: "number"
+          },
+
+          strengths: {
+            type: "array",
+
+            items: {
+              type: "string"
+            }
+          },
+
+          weaknesses: {
+            type: "array",
+
+            items: {
+              type: "string"
+            }
+          },
+
+          next_steps: {
+            type: "array",
+
+            items: {
+              type: "string"
+            }
+          },
+
+          corrected_answer: {
+            type: "string"
+          }
+        },
+
+        required: [
+          "message",
+          "band",
+          "strengths",
+          "weaknesses",
+          "next_steps",
+          "corrected_answer"
+        ]
+      };
 
       const result =
         await openaiRequest(
@@ -297,7 +402,7 @@ uslubdan foydalan.
           JSON.stringify({
             model: AI_MODEL,
 
-            instructions: prompt,
+            instructions,
 
             input: [
               {
@@ -317,67 +422,12 @@ uslubdan foydalan.
               }
             ],
 
-            text: {
-              format: {
-                type: "json_schema",
+            ...jsonSchemaResult(
+              "diagnostic_result",
+              schema
+            ),
 
-                name:
-                  "diagnostic_result",
-
-                strict: true,
-
-                schema: {
-                  type: "object",
-
-                  additionalProperties:
-                    false,
-
-                  properties: {
-                    message: {
-                      type: "string"
-                    },
-
-                    band: {
-                      type: "number"
-                    },
-
-                    strengths: {
-                      type: "array",
-                      items: {
-                        type: "string"
-                      }
-                    },
-
-                    weaknesses: {
-                      type: "array",
-                      items: {
-                        type: "string"
-                      }
-                    },
-
-                    next_steps: {
-                      type: "array",
-                      items: {
-                        type: "string"
-                      }
-                    },
-
-                    corrected_answer: {
-                      type: "string"
-                    }
-                  },
-
-                  required: [
-                    "message",
-                    "band",
-                    "strengths",
-                    "weaknesses",
-                    "next_steps",
-                    "corrected_answer"
-                  ]
-                }
-              }
-            }
+            max_output_tokens: 1200
           }),
 
           {
@@ -386,14 +436,27 @@ uslubdan foydalan.
           }
         );
 
-      const text =
+      const output =
         result.output_text || "";
 
-      res.json(
-        JSON.parse(text)
-      );
+      let parsed;
+
+      try {
+        parsed = JSON.parse(output);
+      } catch {
+        throw new Error(
+          "AI diagnostika natijasini JSON formatida qaytarmadi."
+        );
+      }
+
+      res.json(parsed);
 
     } catch (error) {
+      console.error(
+        "DIAGNOSTIC ERROR:",
+        error
+      );
+
       res.status(500).json({
         error: error.message
       });
@@ -443,12 +506,17 @@ Bahola:
 
 1. Fluency and Coherence
 2. Lexical Resource
-3. Grammar
+3. Grammatical Range and Accuracy
 4. Pronunciation
 
-Lekin faqat transcript mavjud bo'lsa,
-pronunciationni aniq baholay
-olmasligingni ayt.
+MUHIM:
+
+Faqat transcript berilgan
+bo'lsa, pronunciationni
+aniq baholab bo'lmaydi.
+
+Shuning uchun pronunciation
+haqida cheklovni ochiq ayt.
 
 Taxminiy band:
 
@@ -456,10 +524,64 @@ Taxminiy band:
 
 0.5 qadam bilan bahola.
 
-O'quvchiga o'zbekcha
-sokin va kulgili tarzda
-feedback ber.
+Bu rasmiy IELTS natijasi emas.
+
+O'quvchiga o'zbekcha,
+sokin va foydali feedback ber.
 `;
+
+      const schema = {
+        type: "object",
+
+        additionalProperties: false,
+
+        properties: {
+          message: {
+            type: "string"
+          },
+
+          band: {
+            type: "number"
+          },
+
+          strengths: {
+            type: "array",
+
+            items: {
+              type: "string"
+            }
+          },
+
+          weaknesses: {
+            type: "array",
+
+            items: {
+              type: "string"
+            }
+          },
+
+          next_steps: {
+            type: "array",
+
+            items: {
+              type: "string"
+            }
+          },
+
+          corrected_answer: {
+            type: "string"
+          }
+        },
+
+        required: [
+          "message",
+          "band",
+          "strengths",
+          "weaknesses",
+          "next_steps",
+          "corrected_answer"
+        ]
+      };
 
       const result =
         await openaiRequest(
@@ -488,67 +610,12 @@ feedback ber.
               }
             ],
 
-            text: {
-              format: {
-                type: "json_schema",
+            ...jsonSchemaResult(
+              "speaking_grade",
+              schema
+            ),
 
-                name:
-                  "speaking_grade",
-
-                strict: true,
-
-                schema: {
-                  type: "object",
-
-                  additionalProperties:
-                    false,
-
-                  properties: {
-                    message: {
-                      type: "string"
-                    },
-
-                    band: {
-                      type: "number"
-                    },
-
-                    strengths: {
-                      type: "array",
-                      items: {
-                        type: "string"
-                      }
-                    },
-
-                    weaknesses: {
-                      type: "array",
-                      items: {
-                        type: "string"
-                      }
-                    },
-
-                    next_steps: {
-                      type: "array",
-                      items: {
-                        type: "string"
-                      }
-                    },
-
-                    corrected_answer: {
-                      type: "string"
-                    }
-                  },
-
-                  required: [
-                    "message",
-                    "band",
-                    "strengths",
-                    "weaknesses",
-                    "next_steps",
-                    "corrected_answer"
-                  ]
-                }
-              }
-            }
+            max_output_tokens: 1200
           }),
 
           {
@@ -557,13 +624,26 @@ feedback ber.
           }
         );
 
-      res.json(
-        JSON.parse(
-          result.output_text
-        )
-      );
+      let parsed;
+
+      try {
+        parsed = JSON.parse(
+          result.output_text || ""
+        );
+      } catch {
+        throw new Error(
+          "Speaking baholash natijasi JSON formatida qaytmadi."
+        );
+      }
+
+      res.json(parsed);
 
     } catch (error) {
+      console.error(
+        "SPEAKING GRADE ERROR:",
+        error
+      );
+
       res.status(500).json({
         error: error.message
       });
@@ -577,18 +657,18 @@ feedback ber.
 
 app.post(
   "/api/transcribe",
+
   upload.single("audio"),
 
   async (req, res) => {
-    let filePath;
+    let filePath = null;
 
     try {
       if (!requireKey(res)) return;
 
       if (!req.file) {
         return res.status(400).json({
-          error:
-            "audio fayl kerak"
+          error: "audio fayl kerak"
         });
       }
 
@@ -641,6 +721,11 @@ app.post(
       });
 
     } catch (error) {
+      console.error(
+        "TRANSCRIBE ERROR:",
+        error
+      );
+
       res.status(500).json({
         error: error.message
       });
@@ -664,6 +749,7 @@ app.post(
 
 app.post(
   "/api/tts",
+
   async (req, res) => {
     try {
       if (!requireKey(res)) return;
@@ -699,7 +785,10 @@ app.post(
               voice,
 
               input:
-                text.slice(0, 4000),
+                text.trim().slice(
+                  0,
+                  4000
+                ),
 
               response_format:
                 "mp3"
@@ -708,8 +797,12 @@ app.post(
         );
 
       if (!response.ok) {
+        const errorText =
+          await response.text();
+
         throw new Error(
-          await response.text()
+          errorText ||
+          `TTS error ${response.status}`
         );
       }
 
@@ -723,9 +816,19 @@ app.post(
         "audio/mpeg"
       );
 
+      res.setHeader(
+        "Cache-Control",
+        "no-store"
+      );
+
       res.send(buffer);
 
     } catch (error) {
+      console.error(
+        "TTS ERROR:",
+        error
+      );
+
       res.status(500).json({
         error: error.message
       });
@@ -737,21 +840,73 @@ app.post(
    FRONTEND
 ========================= */
 
-app.get("*", (req, res) => {
-  res.sendFile(
-    path.join(
-      process.cwd(),
-      "public",
-      "index.html"
-    )
-  );
-});
+/*
+  Express 5 da eski "*" wildcard
+  ishlamaydi.
+
+  Shuning uchun:
+  "/{*splat}"
+
+  ishlatilmoqda.
+*/
+
+app.get(
+  "/{*splat}",
+  (req, res) => {
+    res.sendFile(
+      path.join(
+        PUBLIC_DIR,
+        "index.html"
+      )
+    );
+  }
+);
+
+/* =========================
+   ERROR HANDLER
+========================= */
+
+app.use(
+  (error, req, res, next) => {
+    console.error(
+      "SERVER ERROR:",
+      error
+    );
+
+    if (res.headersSent) {
+      return next(error);
+    }
+
+    res.status(500).json({
+      error:
+        error?.message ||
+        "Server xatosi"
+    });
+  }
+);
+
+/* =========================
+   START SERVER
+========================= */
 
 app.listen(
   PORT,
+  "0.0.0.0",
   () => {
     console.log(
-      `IELTS USTOZ AI: http://localhost:${PORT}`
+      `IELTS USTOZ AI running on port ${PORT}`
+    );
+
+    console.log(
+      `AI model: ${AI_MODEL}`
+    );
+
+    console.log(
+      `Transcription model: ${TRANSCRIBE_MODEL}`
+    );
+
+    console.log(
+      `TTS model: ${TTS_MODEL}`
     );
   }
 );
