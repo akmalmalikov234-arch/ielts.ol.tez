@@ -1,407 +1,617 @@
-const $ = (selector) =>
+const $ = selector =>
   document.querySelector(selector);
 
-const $$ = (selector) =>
+const $$ = selector =>
   [...document.querySelectorAll(selector)];
 
 
 const state = {
 
-  live: {
-    ws: null,
-    stream: null,
-    audioContext: null,
-    processor: null,
-    source: null,
-    running: false,
-    nextPlayTime: 0,
-    nodes: new Set()
-  },
+  target: null,
 
-  recorder: {
-    media: null,
-    chunks: [],
-    startedAt: 0,
-    timer: null,
-    blob: null
-  },
-
-  chatHistory: [],
-
-  diagnosticAnswers: [],
+  deadline: "",
 
   level: "A2-B1",
 
   speakingQuestion:
-    "What do you usually do in your free time?"
+    "What do you usually do in your free time?",
+
+  recording: false,
+
+  recorder: null,
+
+  chunks: [],
+
+  audioBlob: null,
+
+  transcript: "",
+
+  history: [],
+
+  diagnosticAnswers: [],
+
+  live: {
+
+    socket: null,
+
+    stream: null,
+
+    audioContext: null,
+
+    processor: null,
+
+    source: null,
+
+    playbackContext: null,
+
+    playbackTime: 0,
+
+    running: false,
+
+    setupComplete: false,
+
+    stopped: false
+
+  }
+
 };
 
 
-/* ========================================
-   HTML ESCAPE
-======================================== */
+/* =====================================================
+   SECURITY
+===================================================== */
 
-function escapeHtml(value) {
-  return String(value).replace(
-    /[&<>'"]/g,
-    (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "'": "&#39;",
-        "\"": "&quot;"
-      })[c]
-  );
+function escapeHTML(value) {
+
+  return String(value)
+    .replace(
+      /[&<>"']/g,
+      character => {
+
+        const map = {
+
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#039;"
+
+        };
+
+        return map[
+          character
+        ];
+
+      }
+    );
+
 }
 
 
-/* ========================================
+/* =====================================================
+   TOAST
+===================================================== */
+
+function toast(message) {
+
+  const element =
+    $("#toast");
+
+  if (!element) {
+    return;
+  }
+
+  element.textContent =
+    message;
+
+  element.classList.add(
+    "show"
+  );
+
+  setTimeout(
+    () => {
+
+      element.classList.remove(
+        "show"
+      );
+
+    },
+
+    3000
+  );
+
+}
+
+
+/* =====================================================
    TABS
-======================================== */
+===================================================== */
 
-function openTab(id) {
+function openTab(name) {
 
-  $$(".tab").forEach(
-    (button) => {
-      button.classList.toggle(
-        "active",
-        button.dataset.tab === id
-      );
-    }
-  );
-
-  $$(".tab-panel").forEach(
-    (panel) => {
-      panel.classList.toggle(
-        "active",
-        panel.id === id
-      );
-    }
-  );
-
-  history.replaceState(
-    null,
-    "",
-    `#${id}`
-  );
-}
-
-
-$$(".tab").forEach(
-  (button) => {
-    button.addEventListener(
-      "click",
-      () =>
-        openTab(
-          button.dataset.tab
-        )
-    );
-  }
-);
-
-
-$$("[data-open]").forEach(
-  (button) => {
-    button.addEventListener(
-      "click",
-      () =>
-        openTab(
-          button.dataset.open
-        )
-    );
-  }
-);
-
-
-/* ========================================
-   SERVER CHECK
-======================================== */
-
-async function checkServer() {
-
-  try {
-
-    const response =
-      await fetch(
-        "/api/health"
-      );
-
-    const data =
-      await response.json();
-
-    const el =
-      $("#serverStatus");
-
-    if (
-      data.ok &&
-      data.geminiConfigured
-    ) {
-
-      el.innerHTML =
-        '<span class="status-dot" style="background:#c8ff42"></span> AI tayyor';
-
-    } else {
-
-      el.innerHTML =
-        '<span class="status-dot" style="background:#ff4e69"></span> GEMINI_API_KEY kerak';
-
-    }
-
-  } catch {
-
-    $("#serverStatus").textContent =
-      "Server ulanmagan";
-
-  }
-}
-
-
-/* ========================================
-   DIAGNOSTIC
-======================================== */
-
-function renderDiagnostic() {
-
-  const questions = [
-
-    {
-      q:
-        "Choose the correct sentence.",
-
-      a: [
-        "She go to school every day.",
-        "She goes to school every day.",
-        "She going to school every day."
-      ],
-
-      correct: 1
-    },
-
-    {
-      q:
-        "What is the closest meaning of 'rapid'?",
-
-      a: [
-        "slow",
-        "quick",
-        "heavy"
-      ],
-
-      correct: 1
-    },
-
-    {
-      q:
-        "Complete: If I had more time, I ___ more English.",
-
-      a: [
-        "would study",
-        "will studied",
-        "study"
-      ],
-
-      correct: 0
-    },
-
-    {
-      q:
-        "Which is natural in IELTS Speaking?",
-
-      a: [
-        "In my opinion, ...",
-        "In my opinion is ...",
-        "I opinion ..."
-      ],
-
-      correct: 0
-    },
-
-    {
-      q:
-        "Choose the best response: 'How often do you read?'",
-
-      a: [
-        "I read twice a week.",
-        "Yes, I am.",
-        "At the library is."
-      ],
-
-      correct: 0
-    }
-
-  ];
-
-
-  $("#diagnosticBox").innerHTML =
-    questions
-      .map(
-        (item, i) => `
-          <div class="quiz-q">
-
-            <h3>
-              ${i + 1}.
-              ${escapeHtml(item.q)}
-            </h3>
-
-            <div class="quiz-options">
-
-              ${item.a
-                .map(
-                  (x, j) => `
-                    <button
-                      class="option"
-                      data-q="${i}"
-                      data-a="${j}"
-                    >
-                      ${escapeHtml(x)}
-                    </button>
-                  `
-                )
-                .join("")}
-
-            </div>
-
-          </div>
-        `
-      )
-      .join("") +
-
-    `
-      <button
-        class="btn primary"
-        id="diagnosticSubmit"
-      >
-        Natijani ko‘rish
-      </button>
-
-      <div
-        id="diagnosticResult"
-      ></div>
-    `;
-
-
-  $$("#diagnosticBox .option")
+  $$(".tab")
     .forEach(
-      (button) => {
+      tab => {
 
-        button.addEventListener(
-          "click",
-          () => {
-
-            const q =
-              Number(
-                button.dataset.q
-              );
-
-            const a =
-              Number(
-                button.dataset.a
-              );
-
-            $$(
-              `.option[data-q="${q}"]`
-            ).forEach(
-              (b) =>
-                b.classList.remove(
-                  "selected"
-                )
-            );
-
-            button.classList.add(
-              "selected"
-            );
-
-            state
-              .diagnosticAnswers[q] =
-              a;
-          }
+        tab.classList.remove(
+          "active"
         );
 
       }
     );
 
 
-  $("#diagnosticSubmit")
-    .addEventListener(
-      "click",
-      submitDiagnostic
+  const selected =
+    $("#" + name);
+
+
+  if (selected) {
+
+    selected.classList.add(
+      "active"
     );
-}
+
+  }
 
 
-async function submitDiagnostic() {
+  $$(".nav-button")
+    .forEach(
+      button => {
 
-  const answers =
-    state.diagnosticAnswers;
+        button.classList.toggle(
+          "active",
+
+          button.dataset.tab ===
+          name
+        );
+
+      }
+    );
 
 
   if (
-    answers.length !== 5 ||
-    answers.some(
-      (x) =>
-        typeof x !==
-        "number"
-    )
+    name ===
+    "speaking"
   ) {
 
-    $("#diagnosticResult")
-      .innerHTML =
-      `
-        <div class="result">
-          Avval 5 ta savolning
-          hammasiga javob ber.
-        </div>
-      `;
+    ensureLiveUI();
 
+  }
+
+}
+
+
+$$(".nav-button")
+  .forEach(
+    button => {
+
+      button.addEventListener(
+        "click",
+
+        () => {
+
+          openTab(
+            button.dataset.tab
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+/* =====================================================
+   HERO
+===================================================== */
+
+$("#startBtn")
+  ?.addEventListener(
+    "click",
+
+    () => {
+
+      $("#diagnosticStart")
+        ?.scrollIntoView({
+          behavior:
+            "smooth",
+
+          block:
+            "center"
+        });
+
+    }
+  );
+
+
+$("#demoBtn")
+  ?.addEventListener(
+    "click",
+
+    () => {
+
+      openTab(
+        "chat"
+      );
+
+      if (
+        $("#chatInput")
+      ) {
+
+        $("#chatInput")
+          .value =
+          "Ustoz, IELTS 8.0 olish uchun qayerdan boshlayman?";
+
+        sendChat();
+
+      }
+
+    }
+  );
+
+
+/* =====================================================
+   TARGET
+===================================================== */
+
+$$(
+  ".target-buttons button"
+)
+  .forEach(
+    button => {
+
+      button.addEventListener(
+        "click",
+
+        () => {
+
+          $$(
+            ".target-buttons button"
+          )
+            .forEach(
+              item => {
+
+                item.classList.remove(
+                  "selected"
+                );
+
+              }
+            );
+
+
+          button.classList.add(
+            "selected"
+          );
+
+
+          state.target =
+            button.dataset.target;
+
+
+          if (
+            $("#targetBand")
+          ) {
+
+            $("#targetBand")
+              .textContent =
+              state.target;
+
+          }
+
+        }
+      );
+
+    }
+  );
+
+
+/* =====================================================
+   DIAGNOSTIC
+===================================================== */
+
+const diagnosticQuestions = [
+
+  {
+
+    question:
+      "IELTSdan hozir taxminan nechchi olasiz?",
+
+    options: [
+      "4.0–4.5",
+      "5.0–5.5",
+      "6.0–6.5",
+      "7.0+"
+    ]
+
+  },
+
+  {
+
+    question:
+      "Kuniga real qancha vaqt ajrata olasiz?",
+
+    options: [
+      "15–30 daqiqa",
+      "1 soat",
+      "2 soat",
+      "3+ soat"
+    ]
+
+  },
+
+  {
+
+    question:
+      "Qaysi skill eng qiyin?",
+
+    options: [
+      "Listening",
+      "Reading",
+      "Writing",
+      "Speaking"
+    ]
+
+  },
+
+  {
+
+    question:
+      "Inglizcha gapirishga munosabatingiz?",
+
+    options: [
+      "Gapirishdan qo‘rqaman",
+      "Oddiy gapiraman",
+      "Erkinroq gapiraman",
+      "Bemalol gaplashaman"
+    ]
+
+  }
+
+];
+
+
+let diagnosticIndex = 0;
+
+
+$("#diagnosticStart")
+  ?.addEventListener(
+    "click",
+    startDiagnostic
+  );
+
+
+$("#closeModal")
+  ?.addEventListener(
+    "click",
+
+    () => {
+
+      $("#diagnosticModal")
+        ?.classList.add(
+          "hidden"
+        );
+
+    }
+  );
+
+
+function startDiagnostic() {
+
+  if (
+    !state.target
+  ) {
+
+    toast(
+      "Avval maqsad balingizni tanlang 😌"
+    );
+
+    return;
+
+  }
+
+
+  state.deadline =
+    $("#deadline")
+      ?.value
+      .trim() ||
+    "aniq emas";
+
+
+  diagnosticIndex =
+    0;
+
+
+  state.diagnosticAnswers =
+    [];
+
+
+  $("#diagnosticModal")
+    ?.classList.remove(
+      "hidden"
+    );
+
+
+  renderDiagnostic();
+
+}
+
+
+function renderDiagnostic() {
+
+  const container =
+    $("#diagStep");
+
+
+  if (!container) {
     return;
   }
 
 
-  const correctAnswers =
-    [1, 1, 0, 0, 0];
+  if (
+    diagnosticIndex >=
+    diagnosticQuestions.length
+  ) {
 
+    container.innerHTML = `
 
-  const localScore =
-    answers.reduce(
-      (sum, answer, index) =>
-        sum +
-        (
-          correctAnswers[index] ===
-          answer
-            ? 1
-            : 0
-        ),
-      0
-    );
-
-
-  $("#diagnosticResult")
-    .innerHTML =
-    `
-      <div class="result">
-        AI tahlil qilmoqda...
+      <div class="small-label">
+        YAKUN
       </div>
+
+      <h2>
+        Ustoz hisoblayapti...
+      </h2>
+
+      <p style="color:#8d98b4">
+        Hozircha qochib ketmang. 😌
+      </p>
+
     `;
 
+
+    submitDiagnostic();
+
+    return;
+
+  }
+
+
+  const question =
+    diagnosticQuestions[
+      diagnosticIndex
+    ];
+
+
+  container.innerHTML = `
+
+    <div class="small-label">
+      SAVOL
+      ${diagnosticIndex + 1}
+      /
+      ${diagnosticQuestions.length}
+    </div>
+
+    <div class="diag-q">
+      ${escapeHTML(
+        question.question
+      )}
+    </div>
+
+    <div class="diag-options">
+
+      ${question.options
+        .map(
+          (
+            option,
+            index
+          ) => `
+
+            <button
+              data-index="${index}"
+            >
+              ${escapeHTML(
+                option
+              )}
+            </button>
+
+          `
+        )
+        .join("")}
+
+    </div>
+
+  `;
+
+
+  container
+    .querySelectorAll(
+      "button"
+    )
+    .forEach(
+      button => {
+
+        button.addEventListener(
+          "click",
+
+          () => {
+
+            const index =
+              Number(
+                button.dataset.index
+              );
+
+
+            state
+              .diagnosticAnswers
+              .push({
+
+                question:
+                  question.question,
+
+                answer:
+                  question.options[
+                    index
+                  ]
+
+              });
+
+
+            diagnosticIndex +=
+              1;
+
+
+            renderDiagnostic();
+
+          }
+        );
+
+      }
+    );
+
+}
+
+
+async function submitDiagnostic() {
 
   try {
 
     const response =
       await fetch(
         "/api/diagnostic",
+
         {
-          method: "POST",
+
+          method:
+            "POST",
 
           headers: {
+
             "Content-Type":
               "application/json"
+
           },
 
           body:
             JSON.stringify({
-              answers
+
+              profile: {
+
+                target:
+                  state.target,
+
+                deadline:
+                  state.deadline,
+
+                level:
+                  state.level
+
+              },
+
+              answers:
+                state.diagnosticAnswers
+
             })
+
         }
       );
 
@@ -410,118 +620,1447 @@ async function submitDiagnostic() {
       await response.json();
 
 
-    if (!response.ok) {
+    if (
+      !response.ok
+    ) {
+
       throw new Error(
         data.error ||
-        "Xato"
+        "Diagnostika xatosi"
       );
+
     }
 
 
-    const result =
-      data.result;
-
-
-    state.level =
-      result.estimatedLevel ||
-      (
-        localScore >= 4
-          ? "B1-B2"
-          : "A2-B1"
+    $("#diagnosticModal")
+      ?.classList.add(
+        "hidden"
       );
 
 
-    $("#diagnosticResult")
-      .innerHTML =
-      `
-        <div class="result">
+    const band =
+      Number(
+        data.band ||
+        0
+      );
 
-          <b>
-            Taxminiy daraja:
-          </b>
 
-          ${escapeHtml(
-            state.level
-          )}
+    if (
+      $("#statBand")
+    ) {
 
-          <br>
+      $("#statBand")
+        .textContent =
+        band.toFixed(1);
 
-          <b>
-            AI bahosi:
-          </b>
+    }
 
-          ${escapeHtml(
-            result.overall
-          )}
-          / 9
 
-          <p>
-            ${escapeHtml(
-              result.message ||
-              ""
-            )}
-          </p>
+    if (
+      $("#targetBand")
+    ) {
 
-          <b>
-            Reja:
-          </b>
+      $("#targetBand")
+        .textContent =
+        state.target;
 
-          <ul>
-            ${
-              (
-                result.plan ||
-                []
-              )
-                .map(
-                  escapeHtml
-                )
-                .map(
-                  (v) =>
-                    `<li>${v}</li>`
-                )
-                .join("")
-            }
-          </ul>
+    }
 
-        </div>
-      `;
+
+    if (
+      $("#sideLevel")
+    ) {
+
+      $("#sideLevel")
+        .textContent =
+        `Taxminiy: ${band.toFixed(1)}`;
+
+    }
+
+
+    if (
+      $("#progressBar")
+    ) {
+
+      const target =
+        Number(
+          state.target
+        );
+
+
+      const percentage =
+        Math.min(
+          100,
+
+          Math.max(
+            5,
+
+            (
+              band /
+              target
+            ) *
+            100
+          )
+        );
+
+
+      $("#progressBar")
+        .style.width =
+        percentage +
+        "%";
+
+    }
+
+
+    if (
+      $("#progressText")
+    ) {
+
+      $("#progressText")
+        .textContent =
+        data.message ||
+        "Reja tayyor.";
+
+    }
+
+
+    toast(
+      "Diagnostika tugadi. Endi ustoz qochirmaydi 😌"
+    );
 
   } catch (error) {
 
-    $("#diagnosticResult")
-      .innerHTML =
-      `
-        <div class="result">
+    $("#diagnosticModal")
+      ?.classList.add(
+        "hidden"
+      );
 
-          AI ishlamadi:
-          ${escapeHtml(
-            error.message
-          )}
 
-          <br>
-
-          Mahalliy test:
-          ${localScore}/5.
-
-        </div>
-      `;
+    toast(
+      error.message
+    );
 
   }
+
 }
 
 
-/* ========================================
-   AUDIO HELPERS
-======================================== */
+/* =====================================================
+   LIVE SPEAKING STYLE
+===================================================== */
 
-function base64FromBytes(
-  bytes
+function ensureLiveStyles() {
+
+  if (
+    $("#liveSpeakingStyles")
+  ) {
+
+    return;
+
+  }
+
+
+  const style =
+    document.createElement(
+      "style"
+    );
+
+
+  style.id =
+    "liveSpeakingStyles";
+
+
+  style.textContent = `
+
+    .live-speaking-card {
+
+      margin:
+        0 0 20px;
+
+      padding:
+        24px;
+
+      border:
+        1px solid
+        rgba(
+          200,
+          255,
+          66,
+          .22
+        );
+
+      border-radius:
+        18px;
+
+      background:
+        linear-gradient(
+          180deg,
+          rgba(
+            200,
+            255,
+            66,
+            .055
+          ),
+          rgba(
+            8,
+            12,
+            25,
+            .2
+          )
+        );
+
+      box-shadow:
+        0 0 35px
+        rgba(
+          200,
+          255,
+          66,
+          .04
+        );
+
+    }
+
+
+    .live-speaking-head {
+
+      display:
+        flex;
+
+      align-items:
+        center;
+
+      justify-content:
+        space-between;
+
+      gap:
+        16px;
+
+    }
+
+
+    .live-speaking-title {
+
+      display:
+        flex;
+
+      align-items:
+        center;
+
+      gap:
+        14px;
+
+    }
+
+
+    .live-orb {
+
+      width:
+        48px;
+
+      height:
+        48px;
+
+      border-radius:
+        50%;
+
+      display:
+        grid;
+
+      place-items:
+        center;
+
+      background:
+        #c8ff42;
+
+      color:
+        #071008;
+
+      font-weight:
+        900;
+
+      box-shadow:
+        0 0 0 7px
+        rgba(
+          200,
+          255,
+          66,
+          .08
+        ),
+
+        0 0 28px
+        rgba(
+          200,
+          255,
+          66,
+          .24
+        );
+
+    }
+
+
+    .live-orb.live-pulse {
+
+      animation:
+        livePulse
+        1.35s
+        infinite;
+
+    }
+
+
+    @keyframes livePulse {
+
+      0%,
+      100% {
+
+        transform:
+          scale(1);
+
+      }
+
+      50% {
+
+        transform:
+          scale(1.08);
+
+      }
+
+    }
+
+
+    .live-status {
+
+      font-size:
+        13px;
+
+      color:
+        #8d98b4;
+
+      margin-top:
+        4px;
+
+    }
+
+
+    .live-status.ok {
+
+      color:
+        #c8ff42;
+
+    }
+
+
+    .live-status.err {
+
+      color:
+        #ff7184;
+
+    }
+
+
+    .live-actions {
+
+      display:
+        flex;
+
+      gap:
+        10px;
+
+      flex-wrap:
+        wrap;
+
+      margin-top:
+        20px;
+
+    }
+
+
+    .live-button {
+
+      border:
+        0;
+
+      border-radius:
+        12px;
+
+      padding:
+        12px 18px;
+
+      font-weight:
+        800;
+
+      cursor:
+        pointer;
+
+      background:
+        #c8ff42;
+
+      color:
+        #071008;
+
+    }
+
+
+    .live-button:disabled {
+
+      opacity:
+        .4;
+
+      cursor:
+        not-allowed;
+
+    }
+
+
+    .live-button.stop {
+
+      background:
+        rgba(
+          255,
+          113,
+          132,
+          .12
+        );
+
+      color:
+        #ff7184;
+
+      border:
+        1px solid
+        rgba(
+          255,
+          113,
+          132,
+          .2
+        );
+
+    }
+
+
+    .live-transcript {
+
+      margin-top:
+        18px;
+
+      min-height:
+        64px;
+
+      padding:
+        14px;
+
+      border-radius:
+        12px;
+
+      background:
+        rgba(
+          255,
+          255,
+          255,
+          .025
+        );
+
+      border:
+        1px solid
+        rgba(
+          255,
+          255,
+          255,
+          .06
+        );
+
+      color:
+        #b7c0d7;
+
+      white-space:
+        pre-wrap;
+
+    }
+
+
+    .live-help {
+
+      margin-top:
+        12px;
+
+      color:
+        #6f7b96;
+
+      font-size:
+        12px;
+
+      line-height:
+        1.5;
+
+    }
+
+  `;
+
+
+  document.head.appendChild(
+    style
+  );
+
+}
+
+
+/* =====================================================
+   LIVE SPEAKING UI
+===================================================== */
+
+function ensureLiveUI() {
+
+  ensureLiveStyles();
+
+
+  const speaking =
+    $("#speaking");
+
+
+  if (
+    !speaking ||
+    $("#liveSpeakingCard")
+  ) {
+
+    return;
+
+  }
+
+
+  const card =
+    document.createElement(
+      "article"
+    );
+
+
+  card.className =
+    "live-speaking-card";
+
+
+  card.id =
+    "liveSpeakingCard";
+
+
+  card.innerHTML = `
+
+    <div
+      class="live-speaking-head"
+    >
+
+      <div
+        class="live-speaking-title"
+      >
+
+        <div
+          class="live-orb"
+          id="liveOrb"
+        >
+          ●
+        </div>
+
+        <div>
+
+          <div
+            class="small-label"
+          >
+            JONLI SPEAKING
+          </div>
+
+          <h3
+            style="margin:3px 0 0"
+          >
+            Live IELTS Ustoz
+          </h3>
+
+          <div
+            class="live-status"
+            id="liveStatus"
+          >
+            Tayyor.
+            Mikrofonni yoqing.
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <div
+        class="tag"
+        id="liveBadge"
+      >
+        TAYYOR
+      </div>
+
+    </div>
+
+
+    <div
+      class="live-actions"
+    >
+
+      <button
+        class="live-button"
+        id="liveStartBtn"
+      >
+        🎙 Jonli suhbatni boshlash
+      </button>
+
+
+      <button
+        class="live-button stop"
+        id="liveStopBtn"
+        disabled
+      >
+        ■ To‘xtatish
+      </button>
+
+    </div>
+
+
+    <div
+      class="live-transcript"
+      id="liveTranscript"
+    >
+      Ustozning savoli shu yerda
+      ko‘rinadi.
+      Suhbat davomida sizning
+      gaplaringiz ham matn
+      ko‘rinishida chiqadi.
+    </div>
+
+
+    <div
+      class="live-help"
+    >
+      Telefon kabi gaplashing:
+      mikrofonni yoqing,
+      savolga inglizcha javob
+      bering va tabiiy pauza qiling.
+      Ustoz qisqa gapiradi va
+      navbatni sizga beradi.
+    </div>
+
+  `;
+
+
+  const questionCard =
+    speaking.querySelector(
+      ".question-card"
+    );
+
+
+  speaking.insertBefore(
+    card,
+
+    questionCard ||
+    speaking.firstChild
+  );
+
+
+  $("#liveStartBtn")
+    .addEventListener(
+      "click",
+      startLiveSpeaking
+    );
+
+
+  $("#liveStopBtn")
+    .addEventListener(
+      "click",
+      stopLiveSpeaking
+    );
+
+}
+
+
+function setLiveStatus(
+  text,
+  type = ""
 ) {
 
-  let binary = "";
+  const element =
+    $("#liveStatus");
+
+
+  const badge =
+    $("#liveBadge");
+
+
+  if (element) {
+
+    element.textContent =
+      text;
+
+    element.className =
+      `live-status ${type}`.trim();
+
+  }
+
+
+  if (badge) {
+
+    if (
+      type ===
+      "err"
+    ) {
+
+      badge.textContent =
+        "XATO";
+
+    } else if (
+      state.live.running
+    ) {
+
+      badge.textContent =
+        "ONLINE";
+
+    } else {
+
+      badge.textContent =
+        "TAYYOR";
+
+    }
+
+  }
+
+}
+
+
+function appendLiveText(
+  prefix,
+  text
+) {
+
+  const box =
+    $("#liveTranscript");
+
+
+  if (
+    !box ||
+    !text
+  ) {
+
+    return;
+
+  }
+
+
+  const clean =
+    String(
+      text
+    ).trim();
+
+
+  if (!clean) {
+    return;
+  }
+
+
+  box.textContent =
+    `${prefix}: ${clean}`;
+
+}
+
+
+/* =====================================================
+   START LIVE
+===================================================== */
+
+async function startLiveSpeaking() {
+
+  if (
+    state.live.running
+  ) {
+
+    return;
+
+  }
+
+
+  ensureLiveUI();
+
+
+  setLiveStatus(
+    "Ulanmoqda..."
+  );
+
+
+  if (
+    $("#liveStartBtn")
+  ) {
+
+    $("#liveStartBtn")
+      .disabled =
+      true;
+
+  }
+
+
+  try {
+
+    if (
+      !navigator
+        .mediaDevices
+        ?.getUserMedia
+    ) {
+
+      throw new Error(
+        "Brauzer mikrofonni qo‘llamayapti."
+      );
+
+    }
+
+
+    const tokenResponse =
+      await fetch(
+        "/api/live-token",
+
+        {
+          method:
+            "POST"
+        }
+      );
+
+
+    const tokenData =
+      await tokenResponse.json();
+
+
+    if (
+      !tokenResponse.ok ||
+      !tokenData.token
+    ) {
+
+      throw new Error(
+        tokenData.error ||
+        "Gemini Live token olinmadi."
+      );
+
+    }
+
+
+    const wsUrl =
+
+      "wss://generativelanguage.googleapis.com/" +
+
+      "ws/google.ai.generativelanguage.v1beta." +
+
+      "GenerativeService." +
+
+      "BidiGenerateContentConstrained" +
+
+      "?access_token=" +
+
+      encodeURIComponent(
+        tokenData.token
+      );
+
+
+    const socket =
+      new WebSocket(
+        wsUrl
+      );
+
+
+    state.live.socket =
+      socket;
+
+
+    state.live.stopped =
+      false;
+
+
+    socket.onopen =
+      async () => {
+
+        const setup = {
+
+          setup: {
+
+            model:
+              `models/${
+                tokenData.model ||
+                "gemini-3.8-live"
+              }`,
+
+            responseModalities:
+              ["AUDIO"],
+
+            inputAudioTranscription:
+              {},
+
+            outputAudioTranscription:
+              {},
+
+            realtimeInputConfig: {
+
+              automaticActivityDetection: {
+
+                disabled:
+                  false,
+
+                prefixPaddingMs:
+                  120,
+
+                silenceDurationMs:
+                  650
+
+              }
+
+            },
+
+            systemInstruction: {
+
+              parts: [
+
+                {
+
+                  text: `
+
+Sen Live IELTS Ustozsan.
+
+O'quvchi bilan telefon
+orqali gaplashayotgandek
+tabiiy suhbat qil.
+
+Asosiy suhbat tili:
+INGLIZ TILI.
+
+O'quvchi qiynalsa yoki
+o'zbekcha so'rasa,
+qisqa O'ZBEKCHA tushuntirish
+ber va keyin inglizchaga qayt.
+
+IELTS Speaking Part 1,
+Part 2 va Part 3 uslubida
+mashq qil.
+
+Bir vaqtning o'zida
+BITTA savol ber.
+
+Savolni bergandan keyin
+o'quvchining javobini kut.
+
+Uzoq monolog qilma.
+
+Ovoz ohanging:
+sokin,
+do'stona,
+aniq.
+
+O'quvchini gap o'rtasida
+keraksiz to'xtatma.
+
+Javobdan keyin tabiiy
+follow-up savol ber.
+
+Zarur bo'lsa grammatik
+yoki vocabulary xatosini
+juda qisqa tuzat.
+
+Rasmiy IELTS ballini
+berayotganingni da'vo qilma.
+
+Suhbatni o'zing boshlagin.
+
+Avval qisqa salomlash.
+
+Keyin IELTS Speaking
+Part 1 dan bitta savol ber.
+
+                  `.trim()
+
+                }
+
+              ]
+
+            }
+
+          }
+
+        };
+
+
+        socket.send(
+          JSON.stringify(
+            setup
+          )
+        );
+
+
+        state.live.running =
+          true;
+
+
+        state.live.setupComplete =
+          false;
+
+
+        if (
+          $("#liveStopBtn")
+        ) {
+
+          $("#liveStopBtn")
+            .disabled =
+            false;
+
+        }
+
+
+        $("#liveOrb")
+          ?.classList.add(
+            "live-pulse"
+          );
+
+
+        setLiveStatus(
+          "Ustoz ulanmoqda...",
+          "ok"
+        );
+
+
+        await startLiveMicrophone();
+
+      };
+
+
+    socket.onmessage =
+      event => {
+
+        handleLiveMessage(
+          event.data
+        );
+
+      };
+
+
+    socket.onerror =
+      () => {
+
+        setLiveStatus(
+          "Gemini Live ulanishida xato.",
+          "err"
+        );
+
+      };
+
+
+    socket.onclose =
+      () => {
+
+        state.live.running =
+          false;
+
+
+        state.live.setupComplete =
+          false;
+
+
+        stopLiveMicrophoneOnly();
+
+
+        if (
+          $("#liveStopBtn")
+        ) {
+
+          $("#liveStopBtn")
+            .disabled =
+            true;
+
+        }
+
+
+        if (
+          $("#liveStartBtn")
+        ) {
+
+          $("#liveStartBtn")
+            .disabled =
+            false;
+
+        }
+
+
+        $("#liveOrb")
+          ?.classList.remove(
+            "live-pulse"
+          );
+
+
+        if (
+          !state.live.stopped
+        ) {
+
+          setLiveStatus(
+            "Ulanish yopildi.",
+            "err"
+          );
+
+        }
+
+      };
+
+
+  } catch (error) {
+
+    await stopLiveSpeaking();
+
+
+    if (
+      $("#liveStartBtn")
+    ) {
+
+      $("#liveStartBtn")
+        .disabled =
+        false;
+
+    }
+
+
+    setLiveStatus(
+      error.message ||
+      "Live ishlamadi.",
+      "err"
+    );
+
+
+    toast(
+      error.message ||
+      "Live ishlamadi."
+    );
+
+  }
+
+}
+
+
+/* =====================================================
+   MICROPHONE
+===================================================== */
+
+async function startLiveMicrophone() {
+
+  const stream =
+    await navigator
+      .mediaDevices
+      .getUserMedia({
+
+        audio: {
+
+          channelCount:
+            1,
+
+          echoCancellation:
+            true,
+
+          noiseSuppression:
+            true,
+
+          autoGainControl:
+            true
+
+        }
+
+      });
+
+
+  state.live.stream =
+    stream;
+
+
+  const context =
+    new AudioContext();
+
+
+  state.live.audioContext =
+    context;
+
+
+  await context.resume();
+
+
+  const source =
+    context
+      .createMediaStreamSource(
+        stream
+      );
+
+
+  const processor =
+    context
+      .createScriptProcessor(
+        4096,
+        1,
+        1
+      );
+
+
+  state.live.source =
+    source;
+
+
+  state.live.processor =
+    processor;
+
+
+  processor.onaudioprocess =
+    event => {
+
+      if (
+        !state.live.running ||
+        !state.live.socket ||
+        state.live.socket.readyState !==
+          WebSocket.OPEN
+      ) {
+
+        return;
+
+      }
+
+
+      const input =
+        event
+          .inputBuffer
+          .getChannelData(
+            0
+          );
+
+
+      const pcm =
+        downsampleTo16k(
+          input,
+          context.sampleRate
+        );
+
+
+      const base64 =
+        int16ToBase64(
+          pcm
+        );
+
+
+      if (!base64) {
+        return;
+      }
+
+
+      state.live.socket.send(
+
+        JSON.stringify({
+
+          realtimeInput: {
+
+            audio: {
+
+              data:
+                base64,
+
+              mimeType:
+                "audio/pcm;rate=16000"
+
+            }
+
+          }
+
+        })
+
+      );
+
+    };
+
+
+  source.connect(
+    processor
+  );
+
+
+  processor.connect(
+    context.destination
+  );
+
+
+  setLiveStatus(
+    "Ustoz tinglayapti. Gapiring...",
+    "ok"
+  );
+
+}
+
+
+/* =====================================================
+   PCM CONVERSION
+===================================================== */
+
+function downsampleTo16k(
+  input,
+  inputRate
+) {
+
+  if (
+    inputRate ===
+    16000
+  ) {
+
+    const output =
+      new Int16Array(
+        input.length
+      );
+
+
+    for (
+      let i = 0;
+      i < input.length;
+      i++
+    ) {
+
+      output[i] =
+        floatToInt16(
+          input[i]
+        );
+
+    }
+
+
+    return output;
+
+  }
+
+
+  const ratio =
+    inputRate /
+    16000;
+
+
+  const outputLength =
+    Math.max(
+      1,
+
+      Math.round(
+        input.length /
+        ratio
+      )
+    );
+
+
+  const output =
+    new Int16Array(
+      outputLength
+    );
+
+
+  for (
+    let i = 0;
+    i < outputLength;
+    i++
+  ) {
+
+    const start =
+      Math.floor(
+        i * ratio
+      );
+
+
+    const end =
+      Math.min(
+        Math.floor(
+          (i + 1) *
+          ratio
+        ),
+
+        input.length
+      );
+
+
+    let sum =
+      0;
+
+
+    let count =
+      0;
+
+
+    for (
+      let j = start;
+      j < end;
+      j++
+    ) {
+
+      sum +=
+        input[j];
+
+      count++;
+
+    }
+
+
+    const value =
+      count
+        ? sum / count
+        : input[
+            Math.min(
+              start,
+              input.length -
+              1
+            )
+          ] || 0;
+
+
+    output[i] =
+      floatToInt16(
+        value
+      );
+
+  }
+
+
+  return output;
+
+}
+
+
+function floatToInt16(
+  value
+) {
+
+  const sample =
+    Math.max(
+      -1,
+
+      Math.min(
+        1,
+        value
+      )
+    );
+
+
+  return sample < 0
+
+    ? sample * 0x8000
+
+    : sample * 0x7fff;
+
+}
+
+
+function int16ToBase64(
+  samples
+) {
+
+  const bytes =
+    new Uint8Array(
+      samples.buffer,
+      samples.byteOffset,
+      samples.byteLength
+    );
+
+
+  let binary =
+    "";
+
 
   const chunk =
     0x8000;
+
 
   for (
     let i = 0;
@@ -533,28 +2072,39 @@ function base64FromBytes(
       String.fromCharCode(
         ...bytes.subarray(
           i,
-          i + chunk
+
+          Math.min(
+            i + chunk,
+            bytes.length
+          )
         )
       );
+
   }
+
 
   return btoa(
     binary
   );
+
 }
 
 
-function bytesFromBase64(
+function base64ToInt16(
   base64
 ) {
 
   const binary =
-    atob(base64);
+    atob(
+      base64
+    );
 
-  const output =
+
+  const bytes =
     new Uint8Array(
       binary.length
     );
+
 
   for (
     let i = 0;
@@ -562,1812 +2112,1706 @@ function bytesFromBase64(
     i++
   ) {
 
-    output[i] =
-      binary.charCodeAt(i);
-  }
-
-  return output;
-}
-
-
-function floatToPcm16(
-  input
-) {
-
-  const output =
-    new Int16Array(
-      input.length
-    );
-
-  for (
-    let i = 0;
-    i < input.length;
-    i++
-  ) {
-
-    const sample =
-      Math.max(
-        -1,
-        Math.min(
-          1,
-          input[i]
-        )
+    bytes[i] =
+      binary.charCodeAt(
+        i
       );
 
-    output[i] =
-      sample < 0
-        ? sample * 0x8000
-        : sample * 0x7fff;
   }
 
-  return new Uint8Array(
-    output.buffer
+
+  return new Int16Array(
+    bytes.buffer
   );
+
 }
 
 
-function downsample(
-  buffer,
-  inputRate,
-  outputRate = 16000
+/* =====================================================
+   LIVE MESSAGE
+===================================================== */
+
+function handleLiveMessage(
+  raw
 ) {
+
+  let message;
+
+
+  try {
+
+    message =
+      JSON.parse(
+        raw
+      );
+
+  } catch {
+
+    return;
+
+  }
+
 
   if (
-    inputRate ===
-    outputRate
+    message.setupComplete
   ) {
-    return buffer;
-  }
+
+    state.live.setupComplete =
+      true;
 
 
-  const ratio =
-    inputRate /
-    outputRate;
-
-
-  const length =
-    Math.round(
-      buffer.length /
-      ratio
+    setLiveStatus(
+      "Ustoz tayyor. Gapiring...",
+      "ok"
     );
 
 
-  const result =
-    new Float32Array(
-      length
-    );
+    const socket =
+      state.live.socket;
 
 
-  let offset = 0;
-
-
-  for (
-    let i = 0;
-    i < length;
-    i++
-  ) {
-
-    const next =
-      Math.min(
-        buffer.length,
-        Math.round(
-          (i + 1) *
-          ratio
-        )
-      );
-
-
-    let sum = 0;
-    let count = 0;
-
-
-    for (
-      let j = offset;
-      j < next;
-      j++
+    if (
+      socket &&
+      socket.readyState ===
+        WebSocket.OPEN
     ) {
 
-      sum +=
-        buffer[j];
+      socket.send(
 
-      count++;
+        JSON.stringify({
+
+          clientContent: {
+
+            turns: [
+
+              {
+
+                role:
+                  "user",
+
+                parts: [
+
+                  {
+
+                    text:
+                      "Start the IELTS speaking practice now."
+
+                  }
+
+                ]
+
+              }
+
+            ],
+
+            turnComplete:
+              true
+
+          }
+
+        })
+
+      );
+
     }
 
-
-    result[i] =
-      count
-        ? sum / count
-        : 0;
-
-
-    offset = next;
   }
 
 
-  return result;
-}
+  const content =
+    message.serverContent;
 
 
-/* ========================================
-   LIVE UI
-======================================== */
-
-function addLiveBubble(
-  role,
-  text
-) {
-
-  if (
-    !text ||
-    !text.trim()
-  ) {
+  if (!content) {
     return;
   }
 
 
-  const div =
+  if (
+    content
+      .inputTranscription
+      ?.text
+  ) {
+
+    appendLiveText(
+      "Siz",
+      content
+        .inputTranscription
+        .text
+    );
+
+  }
+
+
+  if (
+    content
+      .outputTranscription
+      ?.text
+  ) {
+
+    appendLiveText(
+      "Ustoz",
+      content
+        .outputTranscription
+        .text
+    );
+
+  }
+
+
+  if (
+    content.interrupted
+  ) {
+
+    stopQueuedPlayback();
+
+  }
+
+
+  const parts =
+    content
+      .modelTurn
+      ?.parts ||
+    [];
+
+
+  for (
+    const part of parts
+  ) {
+
+    if (
+      part
+        .inlineData
+        ?.data
+    ) {
+
+      playLivePcm(
+        part.inlineData.data,
+        24000
+      );
+
+    }
+
+  }
+
+
+  if (
+    content.turnComplete
+  ) {
+
+    setLiveStatus(
+      "Ustoz tugatdi. Navbat sizda...",
+      "ok"
+    );
+
+  }
+
+}
+
+
+/* =====================================================
+   LIVE AUDIO PLAYBACK
+===================================================== */
+
+function getPlaybackContext() {
+
+  if (
+    !state.live.playbackContext
+  ) {
+
+    state.live.playbackContext =
+      new AudioContext({
+        sampleRate:
+          24000
+      });
+
+
+    state.live.playbackTime =
+      state
+        .live
+        .playbackContext
+        .currentTime;
+
+  }
+
+
+  return state
+    .live
+    .playbackContext;
+
+}
+
+
+function playLivePcm(
+  base64,
+  sampleRate
+) {
+
+  try {
+
+    const context =
+      getPlaybackContext();
+
+
+    const samples =
+      base64ToInt16(
+        base64
+      );
+
+
+    if (
+      !samples.length
+    ) {
+
+      return;
+
+    }
+
+
+    const buffer =
+      context.createBuffer(
+        1,
+        samples.length,
+        sampleRate
+      );
+
+
+    const channel =
+      buffer.getChannelData(
+        0
+      );
+
+
+    for (
+      let i = 0;
+      i < samples.length;
+      i++
+    ) {
+
+      channel[i] =
+        samples[i] /
+        32768;
+
+    }
+
+
+    const source =
+      context
+        .createBufferSource();
+
+
+    source.buffer =
+      buffer;
+
+
+    source.connect(
+      context.destination
+    );
+
+
+    const now =
+      context.currentTime;
+
+
+    if (
+      state.live.playbackTime <
+      now
+    ) {
+
+      state.live.playbackTime =
+        now;
+
+    }
+
+
+    source.start(
+      state.live.playbackTime
+    );
+
+
+    state.live.playbackTime +=
+      buffer.duration;
+
+
+    setLiveStatus(
+      "Ustoz gapiryapti...",
+      "ok"
+    );
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+  }
+
+}
+
+
+function stopQueuedPlayback() {
+
+  if (
+    state.live.playbackContext
+  ) {
+
+    try {
+
+      state
+        .live
+        .playbackContext
+        .close();
+
+    } catch {}
+
+    state.live.playbackContext =
+      null;
+
+    state.live.playbackTime =
+      0;
+
+  }
+
+}
+
+
+/* =====================================================
+   STOP MICROPHONE
+===================================================== */
+
+function stopLiveMicrophoneOnly() {
+
+  try {
+
+    state.live
+      .processor
+      ?.disconnect();
+
+  } catch {}
+
+
+  try {
+
+    state.live
+      .source
+      ?.disconnect();
+
+  } catch {}
+
+
+  state.live.processor =
+    null;
+
+
+  state.live.source =
+    null;
+
+
+  if (
+    state.live.stream
+  ) {
+
+    state.live.stream
+      .getTracks()
+      .forEach(
+        track =>
+          track.stop()
+      );
+
+  }
+
+
+  state.live.stream =
+    null;
+
+
+  if (
+    state.live.audioContext
+  ) {
+
+    try {
+
+      state
+        .live
+        .audioContext
+        .close();
+
+    } catch {}
+
+    state.live.audioContext =
+      null;
+
+  }
+
+}
+
+
+/* =====================================================
+   STOP LIVE
+===================================================== */
+
+async function stopLiveSpeaking() {
+
+  state.live.stopped =
+    true;
+
+
+  stopLiveMicrophoneOnly();
+
+
+  stopQueuedPlayback();
+
+
+  if (
+    state.live.socket
+  ) {
+
+    try {
+
+      state.live.socket.close(
+        1000,
+        "user stopped"
+      );
+
+    } catch {}
+
+  }
+
+
+  state.live.socket =
+    null;
+
+
+  state.live.running =
+    false;
+
+
+  state.live.setupComplete =
+    false;
+
+
+  if (
+    $("#liveStartBtn")
+  ) {
+
+    $("#liveStartBtn")
+      .disabled =
+      false;
+
+  }
+
+
+  if (
+    $("#liveStopBtn")
+  ) {
+
+    $("#liveStopBtn")
+      .disabled =
+      true;
+
+  }
+
+
+  $("#liveOrb")
+    ?.classList.remove(
+      "live-pulse"
+    );
+
+
+  setLiveStatus(
+    "To‘xtatildi. Qayta boshlashingiz mumkin.",
+    ""
+  );
+
+}
+
+
+/* =====================================================
+   ORDINARY SPEAKING RECORDER
+===================================================== */
+
+let timerInterval =
+  null;
+
+let startedAt =
+  null;
+
+
+$("#recordBtn")
+  ?.addEventListener(
+    "click",
+
+    async () => {
+
+      if (
+        state.recording
+      ) {
+
+        stopRecording();
+
+      } else {
+
+        await startRecording();
+
+      }
+
+    }
+  );
+
+
+async function startRecording() {
+
+  try {
+
+    const stream =
+      await navigator
+        .mediaDevices
+        .getUserMedia({
+          audio:
+            true
+        });
+
+
+    state.chunks =
+      [];
+
+
+    const mimeType =
+      MediaRecorder
+        .isTypeSupported(
+          "audio/webm"
+        )
+
+        ? "audio/webm"
+
+        : "audio/mp4";
+
+
+    state.recorder =
+      new MediaRecorder(
+        stream,
+        {
+          mimeType
+        }
+      );
+
+
+    state
+      .recorder
+      .ondataavailable =
+      event => {
+
+        if (
+          event.data &&
+          event.data.size
+        ) {
+
+          state.chunks
+            .push(
+              event.data
+            );
+
+        }
+
+      };
+
+
+    state.recorder.onstop =
+      () => {
+
+        state.audioBlob =
+          new Blob(
+            state.chunks,
+            {
+              type:
+                mimeType
+            }
+          );
+
+
+        stream
+          .getTracks()
+          .forEach(
+            track =>
+              track.stop()
+          );
+
+
+        transcribeAudio();
+
+      };
+
+
+    state.recorder.start();
+
+
+    state.recording =
+      true;
+
+
+    startedAt =
+      Date.now();
+
+
+    timerInterval =
+      setInterval(
+        updateTimer,
+        200
+      );
+
+
+    $(".recorder")
+      ?.classList.add(
+        "recording"
+      );
+
+
+    if (
+      $("#recordState")
+    ) {
+
+      $("#recordState")
+        .textContent =
+        "Yozilmoqda";
+
+    }
+
+
+    if (
+      $("#recordHint")
+    ) {
+
+      $("#recordHint")
+        .textContent =
+        "Tugatish uchun mikrofonni bosing";
+
+    }
+
+  } catch {
+
+    toast(
+      "Mikrofonga ruxsat berilmadi."
+    );
+
+  }
+
+}
+
+
+function stopRecording() {
+
+  state.recording =
+    false;
+
+
+  clearInterval(
+    timerInterval
+  );
+
+
+  if (
+    state.recorder &&
+    state.recorder.state !==
+      "inactive"
+  ) {
+
+    state.recorder.stop();
+
+  }
+
+
+  $(".recorder")
+    ?.classList.remove(
+      "recording"
+    );
+
+
+  if (
+    $("#recordState")
+  ) {
+
+    $("#recordState")
+      .textContent =
+      "Tahlil qilinmoqda";
+
+  }
+
+
+  if (
+    $("#recordHint")
+  ) {
+
+    $("#recordHint")
+      .textContent =
+      "Audio matnga aylantirilmoqda...";
+
+  }
+
+}
+
+
+function updateTimer() {
+
+  const seconds =
+    Math.floor(
+      (
+        Date.now() -
+        startedAt
+      ) /
+      1000
+    );
+
+
+  const minutes =
+    Math.floor(
+      seconds /
+      60
+    );
+
+
+  const rest =
+    seconds %
+    60;
+
+
+  if (
+    $("#timer")
+  ) {
+
+    $("#timer")
+      .textContent =
+
+      String(
+        minutes
+      )
+        .padStart(
+          2,
+          "0"
+        )
+
+      +
+
+      ":" +
+
+      String(
+        rest
+      )
+        .padStart(
+          2,
+          "0"
+        );
+
+  }
+
+}
+
+
+/* =====================================================
+   TRANSCRIBE
+===================================================== */
+
+async function transcribeAudio() {
+
+  try {
+
+    const form =
+      new FormData();
+
+
+    form.append(
+      "audio",
+
+      state.audioBlob,
+
+      "speaking.webm"
+    );
+
+
+    const response =
+      await fetch(
+        "/api/transcribe",
+
+        {
+          method:
+            "POST",
+
+          body:
+            form
+
+        }
+      );
+
+
+    const data =
+      await response.json();
+
+
+    if (
+      !response.ok
+    ) {
+
+      throw new Error(
+        data.error ||
+        "Transkripsiya xatosi"
+      );
+
+    }
+
+
+    state.transcript =
+      data.text ||
+      "";
+
+
+    if (
+      $("#transcript")
+    ) {
+
+      $("#transcript")
+        .textContent =
+        state.transcript ||
+        "Ovoz aniqlanmadi.";
+
+    }
+
+
+    if (
+      $("#gradeBtn")
+    ) {
+
+      $("#gradeBtn")
+        .disabled =
+        !state.transcript;
+
+    }
+
+
+    if (
+      $("#recordState")
+    ) {
+
+      $("#recordState")
+        .textContent =
+        "Tayyor";
+
+    }
+
+
+    if (
+      $("#recordHint")
+    ) {
+
+      $("#recordHint")
+        .textContent =
+        "Javobingizni tekshirish mumkin";
+
+    }
+
+  } catch (error) {
+
+    toast(
+      error.message
+    );
+
+
+    if (
+      $("#recordState")
+    ) {
+
+      $("#recordState")
+        .textContent =
+        "Xatolik";
+
+    }
+
+  }
+
+}
+
+
+/* =====================================================
+   SPEAKING GRADE
+===================================================== */
+
+$("#gradeBtn")
+  ?.addEventListener(
+    "click",
+    gradeSpeaking
+  );
+
+
+async function gradeSpeaking() {
+
+  const button =
+    $("#gradeBtn");
+
+
+  if (!button) {
+    return;
+  }
+
+
+  button.disabled =
+    true;
+
+
+  button.textContent =
+    "Ustoz tekshiryapti...";
+
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/speaking/grade",
+
+        {
+
+          method:
+            "POST",
+
+          headers: {
+
+            "Content-Type":
+              "application/json"
+
+          },
+
+          body:
+            JSON.stringify({
+
+              question:
+                state.speakingQuestion,
+
+              transcript:
+                state.transcript,
+
+              profile: {
+
+                target:
+                  state.target ||
+                  "7.0"
+
+              }
+
+            })
+
+        }
+      );
+
+
+    const data =
+      await response.json();
+
+
+    if (
+      !response.ok
+    ) {
+
+      throw new Error(
+        data.error ||
+        "Baholash xatosi"
+      );
+
+    }
+
+
+    const band =
+      Number(
+        data.band ||
+        0
+      );
+
+
+    $("#speakingResult")
+      ?.classList.remove(
+        "hidden"
+      );
+
+
+    if (
+      $("#speakingResult")
+    ) {
+
+      $("#speakingResult")
+        .innerHTML = `
+
+          <div class="small-label">
+            USTOZ XULOSASI
+          </div>
+
+          <div class="band">
+            ${band.toFixed(1)}
+          </div>
+
+          <h3>
+            ${escapeHTML(
+              data.message ||
+              ""
+            )}
+          </h3>
+
+          <strong>
+            Kuchli tomonlar
+          </strong>
+
+          <ul>
+
+            ${(data.strengths || [])
+              .map(
+                item =>
+                  `<li>
+                    ${escapeHTML(
+                      item
+                    )}
+                  </li>`
+              )
+              .join("")}
+
+          </ul>
+
+
+          <strong>
+            Ustoz topgan muammolar
+          </strong>
+
+          <ul>
+
+            ${(data.weaknesses || [])
+              .map(
+                item =>
+                  `<li>
+                    ${escapeHTML(
+                      item
+                    )}
+                  </li>`
+              )
+              .join("")}
+
+          </ul>
+
+
+          <strong>
+            Keyingi mashq
+          </strong>
+
+          <ul>
+
+            ${(data.next_steps || [])
+              .map(
+                item =>
+                  `<li>
+                    ${escapeHTML(
+                      item
+                    )}
+                  </li>`
+              )
+              .join("")}
+
+          </ul>
+
+
+          ${
+            data.corrected_answer
+
+              ? `
+
+                <div class="transcript">
+
+                  <strong>
+                    Yaxshiroq variant:
+                  </strong>
+
+                  <br>
+
+                  ${escapeHTML(
+                    data.corrected_answer
+                  )}
+
+                </div>
+
+              `
+
+              : ""
+
+          }
+
+        `;
+
+    }
+
+
+    if (
+      $("#statSpeaking")
+    ) {
+
+      $("#statSpeaking")
+        .textContent =
+        band.toFixed(1);
+
+    }
+
+
+    speak(
+      data.message ||
+      ""
+    );
+
+  } catch (error) {
+
+    toast(
+      error.message
+    );
+
+  } finally {
+
+    button.disabled =
+      false;
+
+    button.textContent =
+      "Javobni tekshirish";
+
+  }
+
+}
+
+
+/* =====================================================
+   LISTENING
+===================================================== */
+
+$("#listenPlay")
+  ?.addEventListener(
+    "click",
+
+    () => {
+
+      speak(
+        `
+        The student usually arrives
+        at the university at eight thirty.
+        On busy days, she leaves home
+        earlier to avoid traffic.
+        `
+      );
+
+    }
+  );
+
+
+$("#checkListen")
+  ?.addEventListener(
+    "click",
+
+    () => {
+
+      const answer =
+        document.querySelector(
+          'input[name="lq"]:checked'
+        );
+
+
+      if (!answer) {
+
+        toast(
+          "Avval javobni tanlang."
+        );
+
+        return;
+
+      }
+
+
+      if (
+        answer.value ===
+        "8:30"
+      ) {
+
+        if (
+          $("#listenFeedback")
+        ) {
+
+          $("#listenFeedback")
+            .innerHTML = `
+
+              <strong
+                style="color:#c8ff42"
+              >
+                To‘g‘ri.
+              </strong>
+
+              Ustoz hozircha
+              seni hurmat qilyapti. 😌
+
+            `;
+
+        }
+
+
+        if (
+          $("#statListening")
+        ) {
+
+          $("#statListening")
+            .textContent =
+            "7.0";
+
+        }
+
+      } else {
+
+        if (
+          $("#listenFeedback")
+        ) {
+
+          $("#listenFeedback")
+            .innerHTML = `
+
+              <strong
+                style="color:#ff7184"
+              >
+                Noto‘g‘ri.
+              </strong>
+
+              Audio yana bir marta.
+              Shoshma.
+
+            `;
+
+        }
+
+      }
+
+    }
+  );
+
+
+/* =====================================================
+   READING
+===================================================== */
+
+$("#checkReading")
+  ?.addEventListener(
+    "click",
+
+    () => {
+
+      const answer =
+        document.querySelector(
+          'input[name="rq"]:checked'
+        );
+
+
+      if (!answer) {
+
+        toast(
+          "Avval javobni tanlang."
+        );
+
+        return;
+
+      }
+
+
+      if (
+        answer.value ===
+        "b"
+      ) {
+
+        if (
+          $("#readingFeedback")
+        ) {
+
+          $("#readingFeedback")
+            .innerHTML = `
+
+              <strong
+                style="color:#c8ff42"
+              >
+                To‘g‘ri.
+              </strong>
+
+              Reading tirik qoldi. 😌
+
+            `;
+
+        }
+
+
+        if (
+          $("#statReading")
+        ) {
+
+          $("#statReading")
+            .textContent =
+            "7.0";
+
+        }
+
+      } else {
+
+        if (
+          $("#readingFeedback")
+        ) {
+
+          $("#readingFeedback")
+            .innerHTML = `
+
+              <strong
+                style="color:#ff7184"
+              >
+                Noto‘g‘ri.
+              </strong>
+
+              Matnni yana bir marta o‘qi.
+
+            `;
+
+        }
+
+      }
+
+    }
+  );
+
+
+/* =====================================================
+   CHAT
+===================================================== */
+
+$("#sendChat")
+  ?.addEventListener(
+    "click",
+    sendChat
+  );
+
+
+$("#chatInput")
+  ?.addEventListener(
+    "keydown",
+
+    event => {
+
+      if (
+        event.key ===
+        "Enter"
+      ) {
+
+        sendChat();
+
+      }
+
+    }
+  );
+
+
+async function sendChat() {
+
+  const input =
+    $("#chatInput");
+
+
+  const message =
+    input
+      ?.value
+      .trim();
+
+
+  if (!message) {
+    return;
+  }
+
+
+  addMessage(
+    "user",
+    message
+  );
+
+
+  input.value =
+    "";
+
+
+  const pending =
+    addMessage(
+      "teacher",
+      "Ustoz yozmoqda..."
+    );
+
+
+  try {
+
+    const response =
+      await fetch(
+        "/api/chat",
+
+        {
+
+          method:
+            "POST",
+
+          headers: {
+
+            "Content-Type":
+              "application/json"
+
+          },
+
+          body:
+            JSON.stringify({
+
+              message,
+
+              history:
+                state.history,
+
+              profile: {
+
+                target:
+                  state.target,
+
+                deadline:
+                  state.deadline,
+
+                level:
+                  state.level
+
+              }
+
+            })
+
+        }
+      );
+
+
+    const data =
+      await response.json();
+
+
+    if (
+      !response.ok
+    ) {
+
+      throw new Error(
+        data.error ||
+        "AI xatosi"
+      );
+
+    }
+
+
+    pending
+      .querySelector(
+        "p"
+      )
+      .textContent =
+      data.reply;
+
+
+    state.history.push(
+
+      {
+        role:
+          "user",
+
+        content:
+          message
+      },
+
+      {
+        role:
+          "assistant",
+
+        content:
+          data.reply
+      }
+
+    );
+
+
+    speak(
+      data.reply
+    );
+
+  } catch (error) {
+
+    pending
+      .querySelector(
+        "p"
+      )
+      .textContent =
+      error.message;
+
+  }
+
+}
+
+
+function addMessage(
+  role,
+  text
+) {
+
+  const message =
     document.createElement(
       "div"
     );
 
 
-  div.className =
-    `bubble ${role}`;
+  message.className =
+    `message ${role}`;
 
 
-  div.textContent =
-    text.trim();
+  message.innerHTML = `
 
+    <b>
 
-  $("#liveConversation")
-    .appendChild(
-      div
-    );
+      ${
+        role ===
+        "teacher"
 
+          ? "Ustoz AI"
 
-  $("#liveConversation")
-    .scrollTop =
-    $("#liveConversation")
-      .scrollHeight;
-}
-
-
-function setLiveUi(
-  running,
-  status = ""
-) {
-
-  state.live.running =
-    running;
-
-
-  $("#liveStart")
-    .disabled =
-    running;
-
-
-  $("#liveStop")
-    .disabled =
-    !running;
-
-
-  $("#liveState")
-    .textContent =
-    running
-      ? "LIVE"
-      : "OFFLINE";
-
-
-  $("#liveState")
-    .classList
-    .toggle(
-      "lime",
-      running
-    );
-
-
-  $("#wave")
-    .classList
-    .toggle(
-      "live",
-      running
-    );
-
-
-  if (status) {
-
-    $("#liveStatus")
-      .textContent =
-      status;
-  }
-}
-
-
-function stopScheduledAudio() {
-
-  state.live.nodes
-    .forEach(
-      (node) => {
-
-        try {
-          node.stop();
-        } catch {}
+          : "Siz"
 
       }
+
+    </b>
+
+    <p>
+
+      ${escapeHTML(
+        text
+      )}
+
+    </p>
+
+  `;
+
+
+  $("#chatbox")
+    ?.appendChild(
+      message
     );
 
 
-  state.live.nodes.clear();
-
-
   if (
-    state.live.audioContext
+    $("#chatbox")
   ) {
 
-    state.live.nextPlayTime =
-      state.live.audioContext
-        .currentTime;
+    $("#chatbox")
+      .scrollTop =
+      $("#chatbox")
+        .scrollHeight;
+
   }
+
+
+  return message;
+
 }
 
 
-/* ========================================
-   PLAY GEMINI PCM AUDIO
-======================================== */
+/* =====================================================
+   NORMAL TTS
+===================================================== */
 
-function playPcm24k(
-  base64
+async function speak(
+  text
 ) {
 
-  const ctx =
-    state.live.audioContext;
-
-
-  if (!ctx) {
+  if (!text) {
     return;
   }
-
-
-  const bytes =
-    bytesFromBase64(
-      base64
-    );
-
-
-  const samples =
-    new Int16Array(
-      bytes.buffer,
-      bytes.byteOffset,
-      Math.floor(
-        bytes.byteLength /
-        2
-      )
-    );
-
-
-  const audio =
-    ctx.createBuffer(
-      1,
-      samples.length,
-      24000
-    );
-
-
-  const channel =
-    audio.getChannelData(
-      0
-    );
-
-
-  for (
-    let i = 0;
-    i < samples.length;
-    i++
-  ) {
-
-    channel[i] =
-      samples[i] /
-      32768;
-  }
-
-
-  const source =
-    ctx.createBufferSource();
-
-
-  source.buffer =
-    audio;
-
-
-  source.connect(
-    ctx.destination
-  );
-
-
-  const now =
-    ctx.currentTime;
-
-
-  const start =
-    Math.max(
-      now + 0.01,
-      state.live.nextPlayTime
-    );
-
-
-  source.start(
-    start
-  );
-
-
-  state.live.nextPlayTime =
-    start +
-    audio.duration;
-
-
-  state.live.nodes.add(
-    source
-  );
-
-
-  source.onended =
-    () =>
-      state.live.nodes.delete(
-        source
-      );
-}
-
-
-/* ========================================
-   START LIVE
-======================================== */
-
-async function startLive() {
-
-  if (
-    state.live.running
-  ) {
-    return;
-  }
-
-
-  setLiveUi(
-    false,
-    "Ulanish tayyorlanmoqda..."
-  );
 
 
   try {
 
-    const tokenResponse =
+    const response =
       await fetch(
-        "/api/live-token",
+        "/api/tts",
+
         {
-          method: "POST"
+
+          method:
+            "POST",
+
+          headers: {
+
+            "Content-Type":
+              "application/json"
+
+          },
+
+          body:
+            JSON.stringify({
+              text
+            })
+
         }
       );
-
-
-    const tokenData =
-      await tokenResponse.json();
 
 
     if (
-      !tokenResponse.ok
+      !response.ok
     ) {
 
-      throw new Error(
-        tokenData.error ||
-        "Live token xatosi"
-      );
+      return;
+
     }
 
 
-    const token =
-      tokenData.token;
+    const blob =
+      await response.blob();
 
 
-    const model =
-      tokenData.model ||
-      "gemini-3.8-live";
-
-
-    const websocketUrl =
-      `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(
-        token
-      )}`;
-
-
-    const ws =
-      new WebSocket(
-        websocketUrl
+    const url =
+      URL.createObjectURL(
+        blob
       );
 
 
-    state.live.ws =
-      ws;
+    const audio =
+      new Audio(
+        url
+      );
 
 
-    ws.onopen =
-      async () => {
-
-        const systemInstruction = `
-You are a calm, friendly IELTS Speaking teacher.
-
-Speak naturally in English.
-
-Start with a short greeting
-and one simple IELTS-style question.
-
-Ask one question at a time.
-
-Let the learner finish speaking.
-
-Do not interrupt too much.
-
-After the learner answers,
-give one or two short corrections
-when useful, then continue.
-
-Adapt difficulty to:
-${state.level}
-
-If the learner uses Uzbek,
-you can briefly clarify in Uzbek,
-then continue in English.
-
-Never claim to be an official
-IELTS examiner.
-
-Keep the conversation natural,
-calm and encouraging.
-        `.trim();
+    audio
+      .play()
+      .catch(
+        () => {}
+      );
 
 
-        const setupMessage = {
-          setup: {
-
-            model:
-              `models/${model}`,
-
-            generationConfig: {
-              responseModalities:
-                ["AUDIO"]
-            },
-
-            inputAudioTranscription: {},
-
-            outputAudioTranscription: {},
-
-            systemInstruction: {
-              parts: [
-                {
-                  text:
-                    systemInstruction
-                }
-              ]
-            }
-          }
-        };
-
-
-        ws.send(
-          JSON.stringify(
-            setupMessage
-          )
-        );
-
-
-        try {
-
-          await startMicrophone();
-
-          setLiveUi(
-            true,
-            "Ustoz tinglayapti... Gapiring."
-          );
-
-        } catch (error) {
-
-          try {
-            ws.close();
-          } catch {}
-
-          throw error;
-        }
-      };
-
-
-    ws.onmessage =
-      (event) => {
-
-        let data;
-
-        try {
-
-          data =
-            JSON.parse(
-              event.data
-            );
-
-        } catch {
-
-          return;
-        }
-
-
-        const content =
-          data.serverContent;
-
-
-        if (!content) {
-          return;
-        }
-
-
-        if (
-          content.interrupted
-        ) {
-
-          stopScheduledAudio();
-        }
-
-
-        if (
-          content.inputTranscription &&
-          content.inputTranscription.text
-        ) {
-
-          addLiveBubble(
-            "user",
-            content
-              .inputTranscription
-              .text
-          );
-        }
-
-
-        if (
-          content.outputTranscription &&
-          content.outputTranscription.text
-        ) {
-
-          addLiveBubble(
-            "ai",
-            content
-              .outputTranscription
-              .text
-          );
-        }
-
-
-        if (
-          content.modelTurn &&
-          Array.isArray(
-            content.modelTurn.parts
-          )
-        ) {
-
-          content.modelTurn.parts
-            .forEach(
-              (part) => {
-
-                if (
-                  part.inlineData &&
-                  part.inlineData.data
-                ) {
-
-                  playPcm24k(
-                    part.inlineData.data
-                  );
-                }
-
-              }
-            );
-        }
-
-
-        if (
-          content.turnComplete
-        ) {
-
-          $("#liveStatus")
-            .textContent =
-            "Ustoz javob berdi. Endi siz gapiring.";
-        }
-      };
-
-
-    ws.onerror =
+    audio.onended =
       () => {
 
-        $("#liveStatus")
-          .textContent =
-          "Live ulanishida xato yuz berdi.";
+        URL.revokeObjectURL(
+          url
+        );
 
       };
 
+  } catch {}
 
-    ws.onclose =
-      () => {
-
-        stopMicrophone();
-
-        setLiveUi(
-          false,
-          "Suhbat tugadi."
-        );
-
-        state.live.ws =
-          null;
-      };
-
-  } catch (error) {
-
-    await stopLive();
-
-    setLiveUi(
-      false,
-      `Xato: ${error.message}`
-    );
-  }
 }
 
 
-/* ========================================
-   MICROPHONE
-======================================== */
-
-async function startMicrophone() {
-
-  if (
-    !navigator.mediaDevices ||
-    !navigator.mediaDevices.getUserMedia
-  ) {
-
-    throw new Error(
-      "Brauzer mikrofonni qo‘llab-quvvatlamaydi."
-    );
-  }
-
-
-  const stream =
-    await navigator.mediaDevices
-      .getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-
-
-  const AudioContextClass =
-    window.AudioContext ||
-    window.webkitAudioContext;
-
-
-  if (!AudioContextClass) {
-
-    stream
-      .getTracks()
-      .forEach(
-        (track) =>
-          track.stop()
-      );
-
-    throw new Error(
-      "AudioContext brauzerda mavjud emas."
-    );
-  }
-
-
-  const ctx =
-    new AudioContextClass();
-
-
-  await ctx.resume();
-
-
-  const source =
-    ctx.createMediaStreamSource(
-      stream
-    );
-
-
-  const processor =
-    ctx.createScriptProcessor(
-      4096,
-      1,
-      1
-    );
-
-
-  processor.onaudioprocess =
-    (event) => {
-
-      const ws =
-        state.live.ws;
-
-
-      if (
-        !ws ||
-        ws.readyState !==
-          WebSocket.OPEN
-      ) {
-
-        return;
-      }
-
-
-      const data =
-        downsample(
-          event
-            .inputBuffer
-            .getChannelData(0),
-
-          ctx.sampleRate,
-
-          16000
-        );
-
-
-      const pcm =
-        floatToPcm16(
-          data
-        );
-
-
-      ws.send(
-        JSON.stringify({
-          realtimeInput: {
-            audio: {
-              data:
-                base64FromBytes(
-                  pcm
-                ),
-
-              mimeType:
-                "audio/pcm;rate=16000"
-            }
-          }
-        })
-      );
-    };
-
-
-  const silent =
-    ctx.createGain();
-
-
-  silent.gain.value = 0;
-
-
-  source.connect(
-    processor
-  );
-
-
-  processor.connect(
-    silent
-  );
-
-
-  silent.connect(
-    ctx.destination
-  );
-
-
-  state.live.stream =
-    stream;
-
-  state.live.audioContext =
-    ctx;
-
-  state.live.source =
-    source;
-
-  state.live.processor =
-    processor;
-
-  state.live.nextPlayTime =
-    ctx.currentTime;
-}
-
-
-/* ========================================
-   STOP MICROPHONE
-======================================== */
-
-function stopMicrophone() {
-
-  if (
-    state.live.processor
-  ) {
-
-    try {
-      state.live.processor.disconnect();
-    } catch {}
-
-  }
-
-
-  if (
-    state.live.source
-  ) {
-
-    try {
-      state.live.source.disconnect();
-    } catch {}
-
-  }
-
-
-  if (
-    state.live.stream
-  ) {
-
-    state.live.stream
-      .getTracks()
-      .forEach(
-        (track) =>
-          track.stop()
-      );
-  }
-
-
-  if (
-    state.live.audioContext
-  ) {
-
-    try {
-      state.live.audioContext.close();
-    } catch {}
-  }
-
-
-  state.live.processor =
-    null;
-
-  state.live.source =
-    null;
-
-  state.live.stream =
-    null;
-
-  state.live.audioContext =
-    null;
-}
-
-
-/* ========================================
-   STOP LIVE
-======================================== */
-
-async function stopLive() {
-
-  stopScheduledAudio();
-
-  stopMicrophone();
-
-
-  if (
-    state.live.ws
-  ) {
-
-    try {
-
-      state.live.ws.close(
-        1000,
-        "user stop"
-      );
-
-    } catch {}
-
-    state.live.ws =
-      null;
-  }
-
-
-  setLiveUi(
-    false,
-    "Suhbat to‘xtatildi."
-  );
-}
-
-
-$("#liveStart")
-  .addEventListener(
-    "click",
-    startLive
-  );
-
-
-$("#liveStop")
-  .addEventListener(
-    "click",
-    stopLive
-  );
-
-
-/* ========================================
-   NORMAL SPEAKING RECORDER
-======================================== */
-
-async function startRecorder() {
-
-  const stream =
-    await navigator.mediaDevices
-      .getUserMedia({
-        audio: true
-      });
-
-
-  const mime =
-    MediaRecorder
-      .isTypeSupported(
-        "audio/webm;codecs=opus"
-      )
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-
-
-  const media =
-    new MediaRecorder(
-      stream,
-      {
-        mimeType: mime
-      }
-    );
-
-
-  state.recorder.media =
-    media;
-
-  state.recorder.chunks =
-    [];
-
-  state.recorder.startedAt =
-    Date.now();
-
-
-  media.ondataavailable =
-    (event) => {
-
-      if (
-        event.data.size
-      ) {
-
-        state.recorder.chunks.push(
-          event.data
-        );
-      }
-    };
-
-
-  media.onstop =
-    () => {
-
-      stream
-        .getTracks()
-        .forEach(
-          (track) =>
-            track.stop()
-        );
-
-
-      state.recorder.blob =
-        new Blob(
-          state.recorder.chunks,
-          {
-            type: mime
-          }
-        );
-
-
-      $("#gradeBtn")
-        .disabled = false;
-    };
-
-
-  media.start(
-    250
-  );
-
-
-  $("#recordBtn")
-    .textContent =
-    "■ To‘xtatish";
-
-
-  state.recorder.timer =
-    setInterval(
-      () => {
-
-        const seconds =
-          Math.floor(
-            (
-              Date.now() -
-              state.recorder
-                .startedAt
-            ) / 1000
-          );
-
-
-        $("#recordTimer")
-          .textContent =
-          `${String(
-            Math.floor(
-              seconds / 60
-            )
-          ).padStart(
-            2,
-            "0"
-          )}:${String(
-            seconds % 60
-          ).padStart(
-            2,
-            "0"
-          )}`;
-
-      },
-      250
-    );
-}
-
-
-function stopRecorder() {
-
-  if (
-    !state.recorder.media
-  ) {
-
-    return;
-  }
-
-
-  state.recorder.media.stop();
-
-  state.recorder.media =
-    null;
-
-
-  clearInterval(
-    state.recorder.timer
-  );
-
-
-  $("#recordBtn")
-    .textContent =
-    "● Yozishni boshlash";
-}
-
-
-$("#recordBtn")
-  .addEventListener(
-    "click",
-    () => {
-
-      if (
-        state.recorder.media
-      ) {
-
-        stopRecorder();
-
-      } else {
-
-        startRecorder()
-          .catch(
-            (error) =>
-              alert(
-                error.message
-              )
-          );
-      }
-
-    }
-  );
-
-
-/* ========================================
-   SPEAKING GRADE
-======================================== */
-
-$("#gradeBtn")
-  .addEventListener(
-    "click",
-    async () => {
-
-      if (
-        !state.recorder.blob
-      ) {
-
-        return;
-      }
-
-
-      $("#gradeResult")
-        .innerHTML =
-        `
-          <div class="grade">
-            Audio transkripsiya
-            qilinmoqda...
-          </div>
-        `;
-
-
-      const formData =
-        new FormData();
-
-
-      formData.append(
-        "audio",
-        state.recorder.blob,
-        "speaking.webm"
-      );
-
-
-      try {
-
-        const transcriptionResponse =
-          await fetch(
-            "/api/transcribe",
-            {
-              method: "POST",
-              body: formData
-            }
-          );
-
-
-        const transcriptionData =
-          await transcriptionResponse
-            .json();
-
-
-        if (
-          !transcriptionResponse.ok
-        ) {
-
-          throw new Error(
-            transcriptionData.error
-          );
-        }
-
-
-        $("#transcript")
-          .textContent =
-          transcriptionData
-            .transcript;
-
-
-        $("#gradeResult")
-          .innerHTML =
-          `
-            <div class="grade">
-              AI baholayapti...
-            </div>
-          `;
-
-
-        const gradeResponse =
-          await fetch(
-            "/api/speaking/grade",
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
-
-              body:
-                JSON.stringify({
-                  transcript:
-                    transcriptionData
-                      .transcript,
-
-                  question:
-                    state.speakingQuestion,
-
-                  level:
-                    state.level
-                })
-            }
-          );
-
-
-        const gradeData =
-          await gradeResponse
-            .json();
-
-
-        if (
-          !gradeResponse.ok
-        ) {
-
-          throw new Error(
-            gradeData.error
-          );
-        }
-
-
-        const result =
-          gradeData.result;
-
-
-        const corrections =
-          (
-            result.corrections ||
-            []
-          )
-            .map(
-              (item) => `
-                <li>
-                  ${escapeHtml(
-                    item.original
-                  )}
-                  →
-                  <b>
-                    ${escapeHtml(
-                      item.better
-                    )}
-                  </b>
-                  —
-                  ${escapeHtml(
-                    item.reason
-                  )}
-                </li>
-              `
-            )
-            .join("");
-
-
-        const strengths =
-          (
-            result.strengths ||
-            []
-          )
-            .map(
-              escapeHtml
-            )
-            .join(", ");
-
-
-        $("#gradeResult")
-          .innerHTML =
-          `
-            <div class="grade">
-
-              <div class="grade-score">
-                ${escapeHtml(
-                  result.band
-                )}
-                / 9
-              </div>
-
-              <b>
-                Fluency:
-              </b>
-
-              ${escapeHtml(
-                result.fluency
-              )}
-
-              &nbsp;
-
-              <b>
-                Lexical:
-              </b>
-
-              ${escapeHtml(
-                result.lexical
-              )}
-
-              &nbsp;
-
-              <b>
-                Grammar:
-              </b>
-
-              ${escapeHtml(
-                result.grammar
-              )}
-
-              <p>
-                <b>
-                  Kuchli tomonlar:
-                </b>
-
-                ${strengths}
-              </p>
-
-              <b>
-                Tuzatishlar:
-              </b>
-
-              <ul>
-                ${corrections}
-              </ul>
-
-            </div>
-          `;
-
-      } catch (error) {
-
-        $("#gradeResult")
-          .innerHTML =
-          `
-            <div class="grade">
-
-              Xato:
-              ${escapeHtml(
-                error.message
-              )}
-
-            </div>
-          `;
-
-      }
-    }
-  );
-
-
-/* ========================================
-   LISTENING
-======================================== */
-
-function initListening() {
-
-  const questions = [
-
-    [
-      "What is the topic?",
-      [
-        "Study routines",
-        "Cooking",
-        "Travel"
-      ],
-      0
-    ],
-
-    [
-      "What helps build a habit?",
-      [
-        "Long sessions only",
-        "Short repeated sessions",
-        "No practice"
-      ],
-      1
-    ]
-
-  ];
-
-
-  $("#listeningQuiz")
-    .innerHTML =
-    questions
-      .map(
-        (question, index) => `
-
-          <div class="quiz-q">
-
-            <h3>
-              ${index + 1}.
-              ${escapeHtml(
-                question[0]
-              )}
-            </h3>
-
-            <div class="quiz-options">
-
-              ${question[1]
-                .map(
-                  (option, optionIndex) => `
-                    <button
-                      class="option"
-                      data-lq="${index}"
-                      data-la="${optionIndex}"
-                    >
-                      ${escapeHtml(
-                        option
-                      )}
-                    </button>
-                  `
-                )
-                .join("")}
-
-            </div>
-
-          </div>
-
-        `
-      )
-      .join("");
-
-
-  $$("#listeningQuiz .option")
-    .forEach(
-      (button) => {
-
-        button.onclick =
-          () => {
-
-            const index =
-              Number(
-                button.dataset.lq
-              );
-
-            const answer =
-              Number(
-                button.dataset.la
-              );
-
-
-            $$(
-              `.option[data-lq="${index}"]`
-            )
-              .forEach(
-                (option) =>
-                  option.classList
-                    .remove(
-                      "correct",
-                      "wrong"
-                    )
-              );
-
-
-            button.classList.add(
-              answer ===
-              questions[index][2]
-                ? "correct"
-                : "wrong"
-            );
-          };
-      }
-    );
-}
-
-
-/* ========================================
-   READING
-======================================== */
-
-function initReading() {
-
-  const questions = [
-
-    [
-      "Why can short sessions be useful?",
-
-      [
-        "They are easier to maintain",
-        "They always take hours",
-        "They remove vocabulary"
-      ],
-
-      0
-    ],
-
-    [
-      "What should a learner do with new words?",
-
-      [
-        "Ignore them",
-        "Use them in sentences",
-        "Only translate them"
-      ],
-
-      1
-    ]
-
-  ];
-
-
-  $("#readingQuiz")
-    .innerHTML =
-    questions
-      .map(
-        (question, index) => `
-
-          <div class="quiz-q">
-
-            <h3>
-              ${index + 1}.
-              ${escapeHtml(
-                question[0]
-              )}
-            </h3>
-
-            <div class="quiz-options">
-
-              ${question[1]
-                .map(
-                  (option, optionIndex) => `
-                    <button
-                      class="option"
-                      data-rq="${index}"
-                      data-ra="${optionIndex}"
-                    >
-                      ${escapeHtml(
-                        option
-                      )}
-                    </button>
-                  `
-                )
-                .join("")}
-
-            </div>
-
-          </div>
-
-        `
-      )
-      .join("");
-
-
-  $$("#readingQuiz .option")
-    .forEach(
-      (button) => {
-
-        button.onclick =
-          () => {
-
-            const index =
-              Number(
-                button.dataset.rq
-              );
-
-            const answer =
-              Number(
-                button.dataset.ra
-              );
-
-
-            $$(
-              `.option[data-rq="${index}"]`
-            )
-              .forEach(
-                (option) =>
-                  option.classList
-                    .remove(
-                      "correct",
-                      "wrong"
-                    )
-              );
-
-
-            button.classList.add(
-              answer ===
-              questions[index][2]
-                ? "correct"
-                : "wrong"
-            );
-          };
-      }
-    );
-}
-
-
-/* ========================================
-   LISTENING AUDIO
-======================================== */
-
-$("#listenPlay")
-  .addEventListener(
-    "click",
-    () => {
-
-      const utterance =
-        new SpeechSynthesisUtterance(
-          "Good morning. Today we are talking about study routines. A short daily session can be easier to maintain."
-        );
-
-
-      utterance.lang =
-        "en-US";
-
-
-      utterance.rate =
-        0.9;
-
-
-      speechSynthesis.cancel();
-
-      speechSynthesis.speak(
-        utterance
-      );
-    }
-  );
-
-
-/* ========================================
-   CHAT
-======================================== */
-
-$("#chatForm")
-  .addEventListener(
-    "submit",
-    async (event) => {
-
-      event.preventDefault();
-
-
-      const input =
-        $("#chatInput");
-
-
-      const text =
-        input.value.trim();
-
-
-      if (!text) {
-        return;
-      }
-
-
-      input.value =
-        "";
-
-
-      const windowElement =
-        $("#chatWindow");
-
-
-      windowElement
-        .insertAdjacentHTML(
-          "beforeend",
-
-          `
-            <div class="msg user">
-              ${escapeHtml(
-                text
-              )}
-            </div>
-          `
-        );
-
-
-      windowElement.scrollTop =
-        windowElement.scrollHeight;
-
-
-      try {
-
-        const response =
-          await fetch(
-            "/api/chat",
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
-
-              body:
-                JSON.stringify({
-                  message:
-                    text,
-
-                  history:
-                    state.chatHistory
-                })
-            }
-          );
-
-
-        const data =
-          await response.json();
-
-
-        if (!response.ok) {
-
-          throw new Error(
-            data.error ||
-            "AI xatosi"
-          );
-        }
-
-
-        state.chatHistory.push(
-          {
-            role: "user",
-            text
-          },
-
-          {
-            role: "model",
-            text:
-              data.reply
-          }
-        );
-
-
-        windowElement
-          .insertAdjacentHTML(
-            "beforeend",
-
-            `
-              <div class="msg ai">
-                ${escapeHtml(
-                  data.reply
-                )}
-              </div>
-            `
-          );
-
-
-        windowElement.scrollTop =
-          windowElement.scrollHeight;
-
-      } catch (error) {
-
-        windowElement
-          .insertAdjacentHTML(
-            "beforeend",
-
-            `
-              <div class="msg ai">
-                Xato:
-                ${escapeHtml(
-                  error.message
-                )}
-              </div>
-            `
-          );
-      }
-    }
-  );
-
-
-/* ========================================
-   INITIALIZE
-======================================== */
-
-renderDiagnostic();
-
-initListening();
-
-initReading();
-
-checkServer();
-
-
-const initial =
-  location.hash.slice(1);
+/* =====================================================
+   START
+===================================================== */
+
+ensureLiveUI();
 
 
 if (
-  initial &&
-  $(`#${initial}`)
+  location.hash ===
+  "#speaking"
 ) {
 
   openTab(
-    initial
+    "speaking"
   );
+
 }
-
-
-/* ========================================
-   CLEANUP
-======================================== */
-
-window.addEventListener(
-  "beforeunload",
-  () => {
-
-    stopMicrophone();
-
-    if (
-      state.live.ws
-    ) {
-
-      try {
-        state.live.ws.close();
-      } catch {}
-
-    }
-
-  }
-);
