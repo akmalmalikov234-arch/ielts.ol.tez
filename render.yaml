@@ -17,5 +17,17 @@ services:
       - key: LIVE_VOICE
         value: Kore
 
+      - key: OPENAI_API_KEY
+        sync: false
+
+      - key: AI_MODEL
+        value: gpt-5.6-luna
+
+      - key: TRANSCRIBE_MODEL
+        value: gpt-4o-transcribe
+
+      - key: TTS_MODEL
+        value: gpt-4o-mini-tts
+
       - key: PORT
         value: 10000
